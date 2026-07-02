@@ -40,6 +40,62 @@ function timeAgo(iso: string) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+const MAX_DEPTH = 2; // 3 visual levels: 0, 1, 2
+
+type CNode = Comment & { children: CNode[] };
+
+type ThreadRow = {
+  comment: Comment;
+  depth: number; // visual depth (clamped)
+  actualDepth: number;
+  ancestors: string[]; // ancestor ids, index = rail level (clamped)
+  descendants: number; // total replies underneath
+  collapsed: boolean;
+};
+
+function buildThreadRows(comments: Comment[], collapsed: Set<string>): ThreadRow[] {
+  const map = new Map<string, CNode>();
+  comments.forEach((c) => map.set(c.id, { ...c, children: [] }));
+  const roots: CNode[] = [];
+  for (const node of map.values()) {
+    if (node.parent_comment_id && map.has(node.parent_comment_id)) {
+      map.get(node.parent_comment_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const score = (c: CNode) => c.up - c.down;
+  const byTop = (a: CNode, b: CNode) =>
+    score(b) - score(a) || new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  const sortDeep = (nodes: CNode[]) => {
+    nodes.sort(byTop);
+    nodes.forEach((n) => sortDeep(n.children));
+  };
+  sortDeep(roots);
+
+  const countDesc = (n: CNode): number =>
+    n.children.reduce((acc, c) => acc + 1 + countDesc(c), 0);
+
+  const out: ThreadRow[] = [];
+  const walk = (nodes: CNode[], actualDepth: number, ancestors: string[]) => {
+    for (const n of nodes) {
+      const depth = Math.min(actualDepth, MAX_DEPTH);
+      const isCollapsed = collapsed.has(n.id);
+      out.push({
+        comment: n,
+        depth,
+        actualDepth,
+        ancestors: ancestors.slice(0, depth),
+        descendants: countDesc(n),
+        collapsed: isCollapsed,
+      });
+      if (!isCollapsed) walk(n.children, actualDepth + 1, [...ancestors, n.id]);
+    }
+  };
+  walk(roots, 0, []);
+  return out;
+}
+
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -51,7 +107,22 @@ export default function PostDetail() {
   const [sending, setSending] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [replyTo, setReplyTo] = useState<Comment | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const inputRef = React.useRef<TextInput>(null);
+
+  const threadRows = React.useMemo(
+    () => buildThreadRows(comments, collapsed),
+    [comments, collapsed]
+  );
+
+  const toggleCollapse = (commentId: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(commentId)) next.delete(commentId);
+      else next.add(commentId);
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     try {
@@ -184,81 +255,115 @@ export default function PostDetail() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }} keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}>
         <FlatList
           testID="comments-list"
-          data={comments}
-          keyExtractor={(c) => c.id}
+          data={threadRows}
+          keyExtractor={(r) => r.comment.id}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl }}
           ListHeaderComponent={
             <View>
               <PostCard post={post} onChange={setPost} onPress={() => { /* stay */ }} mode="detail" />
-              <Text style={styles.commentsTitle}>Comments ({comments.length})</Text>
+              <Text style={styles.commentsTitle} testID="comment-count">Comments ({comments.length})</Text>
             </View>
           }
           ListEmptyComponent={<Text style={styles.emptyC}>Be the first to comment.</Text>}
-          renderItem={({ item }) => (
-            <View style={styles.commentRow} testID={`comment-${item.id}`}>
-              <Avatar alias={item.author.alias} size={32} />
-              <View style={{ flex: 1 }}>
-                <View style={styles.commentHead}>
-                  <Text style={styles.cAlias}>{item.author.alias}</Text>
-                  <Text style={styles.cTime}>{timeAgo(item.created_at)}</Text>
-                </View>
-                {!!item.reply_to_alias && (
-                  <View style={styles.replyChip} testID={`comment-reply-chip-${item.id}`}>
-                    <Ionicons name="return-down-forward-outline" size={12} color={colors.brand} />
-                    <Text style={styles.replyChipText}>replying to {item.reply_to_alias}</Text>
-                  </View>
-                )}
-                <Text style={styles.cBody}>{item.content}</Text>
-                <View style={styles.commentReactRow}>
+          renderItem={({ item: row }) => {
+            const item = row.comment;
+            const hasReplies = row.descendants > 0;
+            return (
+              <View style={styles.threadRow} testID={`comment-${item.id}`}>
+                {row.ancestors.map((ancestorId, i) => (
                   <Pressable
-                    onPress={async () => {
-                      try {
-                        const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "up" });
-                        setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-                      } catch { /* ignore */ }
-                    }}
-                    style={[styles.voteBtn, item.my_reaction === "up" && styles.voteBtnUp]}
-                    testID={`comment-up-${item.id}`}
-                    hitSlop={6}
+                    key={`${item.id}-rail-${i}`}
+                    style={styles.rail}
+                    onPress={() => toggleCollapse(ancestorId)}
+                    testID={`comment-rail-${item.id}-${i}`}
                   >
-                    <Ionicons
-                      name={item.my_reaction === "up" ? "thumbs-up" : "thumbs-up-outline"}
-                      size={14}
-                      color={item.my_reaction === "up" ? colors.success : colors.muted}
-                    />
-                    <Text style={[styles.voteCount, item.my_reaction === "up" && { color: colors.success }]}>{item.up}</Text>
+                    <View style={styles.railLine} />
                   </Pressable>
+                ))}
+                <View style={styles.commentBody}>
                   <Pressable
-                    onPress={async () => {
-                      try {
-                        const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "down" });
-                        setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-                      } catch { /* ignore */ }
-                    }}
-                    style={[styles.voteBtn, item.my_reaction === "down" && styles.voteBtnDown]}
-                    testID={`comment-down-${item.id}`}
-                    hitSlop={6}
+                    onPress={() => hasReplies && toggleCollapse(item.id)}
+                    disabled={!hasReplies}
+                    style={styles.commentHead}
+                    testID={`comment-head-${item.id}`}
                   >
-                    <Ionicons
-                      name={item.my_reaction === "down" ? "thumbs-down" : "thumbs-down-outline"}
-                      size={14}
-                      color={item.my_reaction === "down" ? colors.error : colors.muted}
-                    />
-                    <Text style={[styles.voteCount, item.my_reaction === "down" && { color: colors.error }]}>{item.down}</Text>
+                    <Avatar alias={item.author.alias} size={row.depth > 0 ? 22 : 26} />
+                    <Text style={styles.cAlias}>{item.author.alias}</Text>
+                    <Text style={styles.cTime}>· {timeAgo(item.created_at)}</Text>
+                    <View style={{ flex: 1 }} />
+                    {row.collapsed && (
+                      <View style={styles.collapsedPill} testID={`comment-collapsed-pill-${item.id}`}>
+                        <Ionicons name="chevron-down" size={12} color={colors.onBrandTertiary} />
+                        <Text style={styles.collapsedPillText}>
+                          {row.descendants} {row.descendants === 1 ? "reply" : "replies"}
+                        </Text>
+                      </View>
+                    )}
                   </Pressable>
-                  <Pressable
-                    onPress={() => startReply(item)}
-                    style={styles.replyBtn}
-                    testID={`comment-reply-${item.id}`}
-                    hitSlop={6}
-                  >
-                    <Ionicons name="chatbubble-outline" size={13} color={colors.brand} />
-                    <Text style={styles.replyBtnText}>Reply</Text>
-                  </Pressable>
+                  {row.collapsed ? (
+                    <Text style={styles.cBodyCollapsed} numberOfLines={1}>{item.content}</Text>
+                  ) : (
+                    <>
+                      {!!item.reply_to_alias && row.actualDepth > MAX_DEPTH && (
+                        <View style={styles.replyChip} testID={`comment-reply-chip-${item.id}`}>
+                          <Ionicons name="return-down-forward-outline" size={12} color={colors.brand} />
+                          <Text style={styles.replyChipText}>replying to {item.reply_to_alias}</Text>
+                        </View>
+                      )}
+                      <Text style={styles.cBody}>{item.content}</Text>
+                      <View style={styles.commentReactRow}>
+                        <Pressable
+                          onPress={async () => {
+                            try {
+                              const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "up" });
+                              setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                            } catch { /* ignore */ }
+                          }}
+                          style={[styles.voteBtn, item.my_reaction === "up" && styles.voteBtnUp]}
+                          testID={`comment-up-${item.id}`}
+                          hitSlop={6}
+                        >
+                          <Ionicons
+                            name={item.my_reaction === "up" ? "thumbs-up" : "thumbs-up-outline"}
+                            size={14}
+                            color={item.my_reaction === "up" ? colors.success : colors.muted}
+                          />
+                          <Text style={[styles.voteCount, item.my_reaction === "up" && { color: colors.success }]}>{item.up}</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={async () => {
+                            try {
+                              const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "down" });
+                              setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                            } catch { /* ignore */ }
+                          }}
+                          style={[styles.voteBtn, item.my_reaction === "down" && styles.voteBtnDown]}
+                          testID={`comment-down-${item.id}`}
+                          hitSlop={6}
+                        >
+                          <Ionicons
+                            name={item.my_reaction === "down" ? "thumbs-down" : "thumbs-down-outline"}
+                            size={14}
+                            color={item.my_reaction === "down" ? colors.error : colors.muted}
+                          />
+                          <Text style={[styles.voteCount, item.my_reaction === "down" && { color: colors.error }]}>{item.down}</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => startReply(item)}
+                          style={styles.replyBtn}
+                          testID={`comment-reply-${item.id}`}
+                          hitSlop={6}
+                        >
+                          <Ionicons name="chatbubble-outline" size={13} color={colors.brand} />
+                          <Text style={styles.replyBtnText}>Reply</Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  )}
                 </View>
               </View>
-            </View>
-          )}
+            );
+          }}
         />
         <View style={styles.inputBar}>
           {replyTo && (
@@ -308,11 +413,38 @@ const styles = StyleSheet.create({
   actionText: { fontSize: font.base, color: colors.onSurface, fontWeight: "600" },
   commentsTitle: { fontSize: font.base, fontWeight: "700", color: colors.onSurface, marginTop: spacing.md, marginBottom: spacing.sm },
   emptyC: { color: colors.muted, textAlign: "center", padding: spacing.lg },
-  commentRow: { flexDirection: "row", gap: spacing.sm, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, marginBottom: spacing.sm },
-  commentHead: { flexDirection: "row", justifyContent: "space-between" },
-  cAlias: { fontWeight: "700", color: colors.onSurface },
+  threadRow: { flexDirection: "row", marginBottom: 2 },
+  rail: {
+    width: 18,
+    alignItems: "center",
+    alignSelf: "stretch",
+  },
+  railLine: {
+    flex: 1,
+    width: 2,
+    borderRadius: 1,
+    backgroundColor: colors.borderStrong,
+  },
+  commentBody: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  commentHead: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 28 },
+  cAlias: { fontWeight: "700", color: colors.onSurface, fontSize: font.sm + 1 },
   cTime: { fontSize: font.sm, color: colors.muted },
   cBody: { fontSize: font.base, color: colors.onSurface, marginTop: 2, lineHeight: 20 },
+  cBodyCollapsed: { fontSize: font.sm, color: colors.muted, marginTop: 2 },
+  collapsedPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brandTertiary,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  collapsedPillText: { fontSize: 11, color: colors.onBrandTertiary, fontWeight: "700" },
   commentReactRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
   voteBtn: {
     flexDirection: "row",

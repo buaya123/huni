@@ -45,7 +45,7 @@ export default function Settings() {
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/profile"); }} hitSlop={12} testID="back-btn">
+        <Pressable onPress={() => router.replace("/(tabs)/profile")} hitSlop={12} testID="back-btn">
           <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>Settings</Text>

@@ -52,9 +52,7 @@ export default function CreatePost() {
       const post = await api.post<{ id: string }>("/posts", body);
       setContent("");
       setPulseOpts(["", ""]);
-      router.replace("/(tabs)/home");
-      // small delay so the tabs stack is in place before opening the post
-      setTimeout(() => router.push(`/post/${post.id}`), 50);
+      router.replace(`/post/${post.id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to post");
     } finally {

@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 3 — targeted retest of BUG FIX 1 (back-button-logs-out-on-web). BUG FIX 1 (Post detail): PASS — after fresh signup, Create tab, submit post: single-hop router.replace(/post/{id}) landed on /post/{id}. Tapping back-btn navigated to https://.../home; body contained Huni home content ('Whispers · Local · Kind', post feed); NO welcome/signup markers detected. User remained logged in. BUG FIX 1b (Settings): PASS — Profile → Settings → back-btn navigated to /profile, no welcome screen. BUG FIX 1c (chat/user detail): VERIFIED by code review only — chat/[id].tsx line 114 uses unconditional router.replace('/(tabs)/messages'); user/[id].tsx line 80 uses unconditional router.replace('/(tabs)/home'); same fix pattern as post detail which is now verified working, so these will behave identically. Console clean of errors on primary flow (only deprecated shadow*/pointerEvents style warnings + WS reconnect noise, both pre-existing, non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "deprecated-style-props", "issue": "Console warns: 'shadow*' style props are deprecated (use boxShadow); props.pointerEvents is deprecated (use style.pointerEvents). Non-blocking but should be cleaned up. Reference: unknown component, appears on initial render of welcome/home."}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_huni_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional cleanup: migrate remaining shadow*/pointerEvents style props to boxShadow / style.pointerEvents to silence RN Web deprecation warnings.",
+    "Optional: investigate repeated wss reconnect failures on /api/ws (WebSocket closes before connection established) — appears throughout the session; not a regression but user-facing chat realtime may be degraded on web."
+  ],
+  "critical_code_review_comments": [
+    "create.tsx line 55: router.replace(`/post/${post.id}`) is the correct single-hop pattern — history stays [welcome-replaced-by-tabs, post-detail] and the back button on post lands on home. Good.",
+    "post/[id].tsx line 125, chat/[id].tsx line 114, user/[id].tsx line 80, settings.tsx line 48: all use unconditional router.replace('/(tabs)/<parent>') for back-btn. This is the correct pattern for web where history may contain unauthenticated routes. Good."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not retested (100% in iter 2)", "frontend": "100% for BUG FIX 1 & 1b verified live; 1c verified via code review"},
+  "seed_data_creation": "Signed up ephemeral TEST_ user test_back_<ts>@huni.app; created one test post; no cleanup needed (does not affect other tests).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "BUG FIX 1 navigation regression is resolved. If future changes touch create.tsx submit() or any secondary-screen back-btn handlers, re-run: signup → Create → post-submit-btn → verify URL contains /post/ → back-btn → verify URL is /home and body does NOT contain 'Create account' + 'I already have an account'. Same for Profile → Settings → back-btn → /profile.",
+  "rca_of_issue": "Fix applied in iteration 3 was correct. create.tsx now does a single router.replace(`/post/${id}`) instead of the prior replace-then-setTimeout-push chain, which eliminated the intermediate history frame that resolved to /welcome on web. Concurrently, all secondary-screen back buttons (post, chat, user, settings) were changed to unconditional router.replace('/(tabs)/<parent>'), removing the fragile canGoBack() branch that could fall through to /welcome. Live test confirms Post→Back lands on /home logged-in and Settings→Back lands on /profile logged-in."
+}

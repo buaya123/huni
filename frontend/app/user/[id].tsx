@@ -77,7 +77,7 @@ export default function UserProfile() {
     <SafeAreaView style={styles.wrap} edges={["top"]}>
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxxl }}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} hitSlop={12} testID="back-btn">
+          <Pressable onPress={() => router.replace("/(tabs)/home")} hitSlop={12} testID="back-btn">
             <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
           </Pressable>
           <Text style={styles.title}>Profile</Text>

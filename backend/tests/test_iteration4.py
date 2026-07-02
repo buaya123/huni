@@ -25,7 +25,13 @@ def seed_once():
 
 def _register():
     email = f"TEST_{uuid.uuid4().hex[:10]}@huni.app"
-    r = requests.post(f"{API}/auth/register", json={"email": email, "password": "testpass123"})
+    r = requests.post(f"{API}/auth/register", json={
+        "email": email,
+        "password": "testpass123",
+        "first_name": "Test",
+        "last_name": "User",
+        "birthdate": "2000-01-15",
+    })
     assert r.status_code == 200, r.text
     d = r.json()
     return d["token"], d["user"], email

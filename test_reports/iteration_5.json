@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 5 — Google Auth (Emergent) + expanded email signup schema. Backend: 48/48 pytest tests PASSED (20 iter1-2 regression + 14 iter4 title/comment reactions + 14 new iter5 tests). Iter5 covers: (a) new register schema (first_name/last_name/birthdate required — missing→422; birthdate '12/12/2000' and '2000-13-45' both →422; valid signup returns user with new fields and auth_provider='password'; /auth/me works with JWT), (b) seed demo users carry first_name/last_name/birthdate, (c) /auth/google/session with bogus session_id →401 (real Emergent responds 401), missing session_id →422, (d) bearer duality — both JWT and session_token accepted on /auth/me (session_token seeded directly into db.user_sessions since httpx to Emergent cannot be patched from a separate test process; expired session_token →401; garbage token →401), (e) logout with session_token deletes the doc from user_sessions (subsequent /auth/me →401) and logout with JWT is a no-op (JWT still valid). Frontend (mobile 390×844): Welcome shows tagline 'Honest. Local. Things.', welcome-google-btn + divider + welcome-signup-btn + welcome-login-btn all present. Signup has 5 inputs (firstname/lastname/birthdate/email/password) + google-signup-btn + submit; empty submit shows inline 'Please enter your first and last name.' error; birthdate input auto-formats '20000115'→'2000-01-15'; successful signup lands on /home. Login has google-login-btn + email + password + submit; demo1@huni.app login succeeds. Bottom tab order Home→Alerts→Create→Messages→Profile confirmed. Feed shows 22 post-title-* testIDs. auth.tsx signInWithGoogle uses redirect target `https://auth.emergentagent.com/?redirect=<encoded window.location.origin>/` per spec (web branch sets window.location.href; native uses WebBrowser.openAuthSessionAsync and parses session_id from fragment). NOTE: The real Google popup is NOT completed in CI as instructed. The successful /auth/google/session flow was verified only via DB seeding of user_sessions (see test_iteration5_google_auth.py::TestBearerDuality). Pre-existing RN Web deprecation warnings (shadow*/pointerEvents) still present, non-blocking.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "deprecated-style-props", "issue": "RN Web console still warns: 'shadow*' style props deprecated (use boxShadow); props.pointerEvents deprecated (use style.pointerEvents). Non-blocking, pre-existing."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_huni_api.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_iteration5_google_auth.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional: migrate remaining shadow*/pointerEvents style props to boxShadow / style.pointerEvents to silence RN Web deprecation warnings.",
+    "Optional: if a live Emergent Google-session flow becomes testable in CI, add a positive-path test that hits the real endpoint (currently we only assert 401 on bogus session_id + simulate the successful path via direct db.user_sessions insert since the backend process cannot be patched from the pytest process)."
+  ],
+  "critical_code_review_comments": [
+    "server.py RegisterIn now correctly requires first_name/last_name (min_length=1..50) and birthdate (8..10 chars); handler double-validates the date via datetime.strptime('%Y-%m-%d') so both '12/12/2000' (length 10) and '2000-13-45' (parse fails) return 422. Good.",
+    "server.py get_current_user tries JWT first, then falls back to db.user_sessions by session_token; correctly normalises tz-naive expires_at to UTC before comparing to now(). This satisfies the bearer duality requirement.",
+    "server.py google_session upserts by email (existing user gets picture/first_name/last_name/google_id merged) and inserts/upserts the session doc with expires_at = now + GOOGLE_SESSION_DAYS. TTL index on user_sessions.expires_at ensures auto-cleanup.",
+    "server.py logout deletes only the session_token doc — JWTs are stateless and remain valid until expiry, as specified.",
+    "seed_data now sets first_name/last_name/birthdate on demo1/demo2/demo3.",
+    "welcome.tsx / signup.tsx / login.tsx render correct testIDs and the redirect target in auth.tsx signInWithGoogle exactly matches spec: `https://auth.emergentagent.com/?redirect=${encodeURIComponent(window.location.origin + '/')}`."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_huni_api.py (updated _register helper to include first_name/last_name/birthdate now that /auth/register requires them)",
+    "/app/backend/tests/test_iteration4.py (same _register helper update)",
+    "/app/backend/tests/test_iteration5_google_auth.py (NEW — 14 tests: 6 register-schema, 1 seed-user, 2 google/session, 3 bearer-duality, 2 logout)"
+  ],
+  "success_rate": {"backend": "100% (48/48)", "frontend": "100% for all iter5 UI checks (welcome + signup + login + tabs + regression)"},
+  "seed_data_creation": "POST /api/dev/seed called (idempotent). Ephemeral TEST_i5_* users created via /auth/register during pytest, plus TEST_ui_* via the frontend signup UI. Session docs inserted/removed cleanly by each bearer-duality/logout test. No permanent test data left behind.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iteration5_google_auth.py cannot patch httpx inside the running backend process, so the positive Google-session path is exercised by inserting a fake session_token directly into db.user_sessions (via pymongo) — this correctly validates the bearer duality but NOT the /auth/google/session upsert branch. If you need to cover that branch, either run pytest against an in-process ASGI test client (using respx.mock as shown in the httpx docs) or point EMERGENT_SESSION_URL at a local fixture server. Also: /auth/register now requires first_name/last_name/birthdate — remember to include these in any new _register helper you write. Real Google popup completion is NOT feasible in Playwright (auth.emergentagent.com requires a live Google account), so continue to verify only the redirect target + button presence on the frontend."
+}

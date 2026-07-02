@@ -18,10 +18,11 @@ import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
 export default function Login() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signIn, signInWithGoogle } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
@@ -46,7 +47,39 @@ export default function Login() {
             <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
           </Pressable>
           <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.sub}>Log in with your email and password.</Text>
+          <Text style={styles.sub}>Sign in to keep whispering.</Text>
+
+          <Pressable
+            style={[styles.googleBtn, googleLoading && { opacity: 0.7 }]}
+            onPress={async () => {
+              setError(null);
+              setGoogleLoading(true);
+              try {
+                await signInWithGoogle();
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : "Google sign in failed");
+              } finally {
+                setGoogleLoading(false);
+              }
+            }}
+            disabled={googleLoading}
+            testID="google-login-btn"
+          >
+            {googleLoading ? (
+              <ActivityIndicator color={colors.onSurface} />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={18} color={colors.onSurface} />
+                <Text style={styles.googleText}>Continue with Google</Text>
+              </>
+            )}
+          </Pressable>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or use email</Text>
+            <View style={styles.dividerLine} />
+          </View>
 
           <View style={styles.field}>
             <Text style={styles.label}>Email</Text>
@@ -126,4 +159,20 @@ const styles = StyleSheet.create({
   switchText: { color: colors.muted, fontSize: font.base },
   switchLink: { color: colors.brand, fontWeight: "700" },
   error: { color: colors.error, fontSize: font.base, textAlign: "center" },
+  googleBtn: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceSecondary,
+    paddingVertical: spacing.md,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    marginTop: spacing.sm,
+  },
+  googleText: { color: colors.onSurface, fontSize: font.lg, fontWeight: "700" },
+  divider: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginVertical: spacing.sm },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { color: colors.muted, fontSize: font.sm },
 });

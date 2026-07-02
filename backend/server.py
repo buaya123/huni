@@ -1,6 +1,7 @@
-"""Sibug backend - anonymous social app.
+"""Huni backend - anonymous social app.
 
 FastAPI + MongoDB (motor). JWT auth with bcrypt password hashing.
+Emergent-managed Google Auth via session tokens.
 WebSockets for realtime chat + notifications.
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
 import jwt
 from bcrypt import checkpw, gensalt, hashpw
 from dotenv import load_dotenv
@@ -21,13 +23,13 @@ from fastapi import (
     APIRouter,
     Depends,
     FastAPI,
+    Header,
     HTTPException,
     Query,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -40,13 +42,17 @@ DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ["JWT_ALGORITHM"]
 JWT_EXPIRE_DAYS = int(os.environ["JWT_EXPIRE_DAYS"])
+EMERGENT_SESSION_URL = os.environ.get(
+    "EMERGENT_SESSION_URL",
+    "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+)
+GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
 app = FastAPI(title="Huni API")
 api = APIRouter(prefix="/api")
-bearer = HTTPBearer(auto_error=False)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("huni")
@@ -112,26 +118,62 @@ async def gen_unique_alias() -> str:
 
 
 async def get_current_user(
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
+    authorization: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    if not creds:
+    """Accept either a JWT (email/password auth) OR a session_token (Google auth)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing token")
-    user_id = decode_token(creds.credentials)
-    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
+    token = authorization.split(" ", 1)[1].strip()
+
+    # 1) try JWT first (short-circuits when signature valid)
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload["sub"]
+        user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+        if user:
+            return user
+    except jwt.PyJWTError:
+        pass
+
+    # 2) try session_token (Google auth)
+    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if session:
+        # normalise expires_at to tz-aware then check
+        exp = session.get("expires_at")
+        exp_dt: Optional[datetime] = None
+        if isinstance(exp, datetime):
+            exp_dt = exp
+        elif isinstance(exp, str):
+            try:
+                exp_dt = datetime.fromisoformat(exp)
+            except ValueError:
+                exp_dt = None
+        if exp_dt and exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+        if exp_dt and exp_dt > now():
+            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0, "password": 0})
+            if user:
+                return user
+
+    raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 # ---------- models ----------
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=100)
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+    birthdate: str = Field(min_length=8, max_length=10)  # "YYYY-MM-DD"
 
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+
+class GoogleSessionIn(BaseModel):
+    session_id: str = Field(min_length=1)
 
 
 class AuthOut(BaseModel):
@@ -195,6 +237,11 @@ def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
         "comment_count": u.get("comment_count", 0),
         "bio": u.get("bio", ""),
         "joined_at": u.get("joined_at"),
+        "first_name": u.get("first_name", ""),
+        "last_name": u.get("last_name", ""),
+        "birthdate": u.get("birthdate", ""),
+        "picture": u.get("picture", ""),
+        "auth_provider": u.get("auth_provider", "password"),
     }
 
 
@@ -238,11 +285,22 @@ async def register(inp: RegisterIn) -> AuthOut:
     existing = await db.users.find_one({"email": email}, {"_id": 1})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    # birthdate must parse as YYYY-MM-DD
+    try:
+        datetime.strptime(inp.birthdate, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid birthdate. Use YYYY-MM-DD.")
+
     alias = await gen_unique_alias()
     user = {
         "id": new_id(),
         "email": email,
         "password": hash_pw(inp.password),
+        "first_name": inp.first_name.strip(),
+        "last_name": inp.last_name.strip(),
+        "birthdate": inp.birthdate,
+        "picture": "",
+        "auth_provider": "password",
         "alias": alias,
         "bio": "",
         "helpful_score": 0,
@@ -256,6 +314,93 @@ async def register(inp: RegisterIn) -> AuthOut:
     await db.users.insert_one(user)
     token = make_token(user["id"])
     return AuthOut(token=token, user=public_user(user))
+
+
+@api.post("/auth/google/session", response_model=AuthOut)
+async def google_session(inp: GoogleSessionIn) -> AuthOut:
+    """Exchange an Emergent session_id (from the hosted Google flow) for our own auth token.
+
+    Upserts the user by email and stores a session_token in `user_sessions`.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client_h:
+            resp = await client_h.get(
+                EMERGENT_SESSION_URL,
+                headers={"X-Session-ID": inp.session_id},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Google session lookup failed: {exc}")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Google session")
+    data = resp.json()
+    email = (data.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Google session missing email")
+    session_token: str = data["session_token"]
+    picture: str = data.get("picture", "") or ""
+    full_name: str = data.get("name", "") or ""
+    parts = full_name.split(" ", 1) if full_name else ["", ""]
+    first_name = parts[0]
+    last_name = parts[1] if len(parts) > 1 else ""
+
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        await db.users.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "picture": picture or existing.get("picture", ""),
+                "first_name": existing.get("first_name") or first_name,
+                "last_name": existing.get("last_name") or last_name,
+                "auth_provider": existing.get("auth_provider") or "google",
+                "google_id": data.get("id") or existing.get("google_id"),
+            }},
+        )
+        user_id = existing["id"]
+    else:
+        alias = await gen_unique_alias()
+        user_id = new_id()
+        await db.users.insert_one({
+            "id": user_id,
+            "email": email,
+            "password": "",  # no password for google users
+            "first_name": first_name,
+            "last_name": last_name,
+            "birthdate": "",
+            "picture": picture,
+            "google_id": data.get("id"),
+            "auth_provider": "google",
+            "alias": alias,
+            "bio": "",
+            "helpful_score": 0,
+            "post_count": 0,
+            "comment_count": 0,
+            "report_count": 0,
+            "joined_at": now().isoformat(),
+            "alias_regens": 0,
+            "last_alias_regen": None,
+        })
+
+    expires_at = now() + timedelta(days=GOOGLE_SESSION_DAYS)
+    await db.user_sessions.update_one(
+        {"session_token": session_token},
+        {"$set": {
+            "session_token": session_token,
+            "user_id": user_id,
+            "created_at": now(),
+            "expires_at": expires_at,
+        }},
+        upsert=True,
+    )
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    return AuthOut(token=session_token, user=public_user(user))
+
+
+@api.post("/auth/logout")
+async def logout(authorization: Optional[str] = Header(default=None)) -> Dict[str, str]:
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        await db.user_sessions.delete_many({"session_token": token})
+    return {"status": "ok"}
 
 
 @api.post("/auth/login", response_model=AuthOut)
@@ -843,9 +988,9 @@ async def ws_endpoint(ws: WebSocket, token: str = Query(...)) -> None:
 async def seed_data() -> Dict[str, Any]:
     """Seed demo users and posts. Idempotent-ish for demo purposes."""
     demo_users = [
-        {"email": "demo1@huni.app", "password": "demo1234"},
-        {"email": "demo2@huni.app", "password": "demo1234"},
-        {"email": "demo3@huni.app", "password": "demo1234"},
+        {"email": "demo1@huni.app", "password": "demo1234", "first_name": "Ana", "last_name": "Cruz", "birthdate": "1998-04-12"},
+        {"email": "demo2@huni.app", "password": "demo1234", "first_name": "Ben", "last_name": "Reyes", "birthdate": "2000-11-03"},
+        {"email": "demo3@huni.app", "password": "demo1234", "first_name": "Cara", "last_name": "Lim", "birthdate": "2002-07-25"},
     ]
     created_users = []
     for du in demo_users:
@@ -856,6 +1001,11 @@ async def seed_data() -> Dict[str, Any]:
                 "id": new_id(),
                 "email": du["email"],
                 "password": hash_pw(du["password"]),
+                "first_name": du["first_name"],
+                "last_name": du["last_name"],
+                "birthdate": du["birthdate"],
+                "picture": "",
+                "auth_provider": "password",
                 "alias": alias,
                 "bio": "",
                 "helpful_score": random.randint(0, 20),
@@ -954,6 +1104,10 @@ async def on_startup() -> None:
     await db.conversations.create_index("participants")
     await db.messages.create_index("conversation_id")
     await db.blocks.create_index([("blocker_id", 1), ("target_user_id", 1)])
+    await db.user_sessions.create_index("session_token", unique=True)
+    await db.user_sessions.create_index("user_id")
+    # TTL index — MongoDB auto-removes expired sessions
+    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
     log.info("Huni API started")
 
 

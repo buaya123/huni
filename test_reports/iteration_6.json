@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 6 — v1 prep. Backend 58/58 pytest PASSED (48 iter1-5 regression + 10 new iter6). Iter6 covers: (a) POST /api/dev/seed returns {users, posts_created} with ENABLE_DEV_SEED=true, returns 404 when unset or 'false' (validated in-process by importing server module then monkeypatch-ing os.environ before invoking the async handler — server.load_dotenv() runs at import time so monkeypatching AFTER import is required). (b) Comment replies: POST /posts/{id}/comments with parent_comment_id returns parent_comment_id + reply_to_alias=<parent author's alias>; missing/nonexistent parent_comment_id → 404 'Parent comment not found'; parent from a different post → 404; deleted parent (status=deleted) → 404; top-level comment (no parent) returns parent_comment_id=null, reply_to_alias=null. (c) GET /posts/{id}/comments hydrates parent_comment_id + reply_to_alias for every comment. (d) Notifications: reply to another user's comment creates type='reply' notification for the parent-comment author (in addition to the post author only getting 'comment' notifications on TOP-LEVEL comments, not replies); replying to your own comment creates NO self-notification. Frontend (mobile 390x844): demo1@huni.app login succeeds. Profile page: logout-btn REMOVED (testID='logout-btn' returns null); settings-btn still present. Settings page: settings-logout-btn present. Post detail: 'Reply' buttons (testID='comment-reply-{id}') render on every comment; tapping shows reply-banner with 'Replying to <alias>' + placeholder becomes 'Reply to <alias>...'; cancel-reply-btn hides the banner and reverts the placeholder to 'Add a kind comment...'; sending a reply immediately appends a comment showing the 'replying to <alias>' chip (comment-reply-chip-{id}). README: no 'Emergent' brand references except the functional EMERGENT_SESSION_URL env var and its default demobackend.emergentagent.com URL (as spec allows). Tab order Home→Alerts→Create→Messages→Profile confirmed on home screen.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "deprecated-style-props", "issue": "RN Web console still warns: 'shadow*' style props deprecated (use boxShadow); props.pointerEvents deprecated (use style.pointerEvents). Non-blocking, pre-existing from prior iterations."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_huni_api.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_iteration5_google_auth.py",
+    "/app/backend/tests/test_iteration6_v1.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional: post detail header doesn't expose a stable testID for the numeric comment_count (only 'Comments (N)' label is rendered inside PostCard). Adding a testID='post-comment-count' or similar on the count node would make E2E assertions on 'header count incremented' cleaner.",
+    "Optional: profile.tsx still keeps orphaned logoutBtn / logoutText style entries (lines 282-286) — safe to remove since no component references them anymore.",
+    "Optional: profile.tsx still imports { useRouter } and uses it only for router.push('/settings') and router.push('/post/...') — no cleanup needed but noted."
+  ],
+  "critical_code_review_comments": [
+    "server.py POST /api/dev/seed correctly gated: `if os.environ.get('ENABLE_DEV_SEED', 'false').lower() != 'true': raise HTTPException(404, 'Not found')`. Reads env at call-time (not import-time) so a runtime flip via env change + restart works as spec.",
+    "server.py POST /posts/{id}/comments now validates parent_comment_id belongs to the SAME post AND is status=='active' (both cases collapse to 404 'Parent comment not found'). Correct.",
+    "server.py notification logic is now conditional: top-level comment → 'comment' notif for post author only (post_author != commenter); reply with parent_comment_id → 'reply' notif for parent author only (parent_author != replier). No 'comment' notif is created for the post author when the new comment is a reply — verified by TestReplyNotifications.test_reply_does_not_create_comment_notification_for_post_author.",
+    "server.py list_comments correctly resolves reply_to_alias by looking up parent.comment.author_id → users.alias for each comment with a parent_comment_id (returns null if parent no longer exists).",
+    "profile.tsx no longer renders the bottom Log out Pressable; the settings gear (top-right, testID='settings-btn') routes to /settings which contains the sole logout-btn (testID='settings-logout-btn').",
+    "post/[id].tsx: reply state (replyTo), banner (testID='reply-banner'), cancel button (testID='cancel-reply-btn'), reply buttons per comment (testID='comment-reply-{id}'), and the reply chip (testID='comment-reply-chip-{id}') are all present and behave per spec. submit() sends parent_comment_id when replyTo is set and immediately appends the returned comment; post header comment_count is bumped +1 via setPost() locally.",
+    "README.md: sole 'Emergent' references remaining are the functional env var EMERGENT_SESSION_URL and the default endpoint host demobackend.emergentagent.com — both explicitly allowed by the problem statement ('backend keeps the functional env var EMERGENT_SESSION_URL only')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6_v1.py (NEW — 10 tests: 2 dev/seed gate, 6 comment-reply CRUD/validation, 2 reply-notification behaviour)"
+  ],
+  "success_rate": {"backend": "100% (58/58)", "frontend": "100% for all iter6 checks (profile no-logout, settings has logout, reply banner+placeholder+cancel+send+chip)"},
+  "seed_data_creation": "POST /api/dev/seed (idempotent) called by test_seed_enabled_returns_users_posts_created; TEST_i6_* users created via /auth/register per test class; a handful of throwaway posts+comments+notifications inserted during pytest. No permanent test data left behind aside from the demo1/2/3 seed already documented in test_credentials.md.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "For the dev/seed gate test: server.py calls load_dotenv() at import time which reloads ENABLE_DEV_SEED=true from backend/.env into os.environ. Therefore any monkeypatch of ENABLE_DEV_SEED MUST happen AFTER `importlib.import_module('server')` — otherwise import re-sets the env var and the handler returns 200 instead of 404. This is now handled correctly in test_iteration6_v1.py::TestDevSeedGate::test_seed_disabled_returns_404_via_mocked_env. Also: the /posts/{id} response object does not expose a 'post-comment-count' testID on the frontend PostCard; if you need to E2E-assert that the header count bumped, either query the visible 'Comments (N)' text via page.text_content() or ask main agent to add a testID. All iter1-5 flows remain green and require no changes.",
+  "rca_of_issue": "N/A — no bugs found."
+}

@@ -21,6 +21,7 @@ type Notif = {
 function typeMeta(t: string) {
   switch (t) {
     case "comment": return { icon: "chatbubble-outline" as const, text: "commented on your post" };
+    case "reply": return { icon: "return-down-forward-outline" as const, text: "replied to your comment" };
     case "reaction": return { icon: "heart-outline" as const, text: "reacted to your post" };
     case "message": return { icon: "paper-plane-outline" as const, text: "sent you a message" };
     default: return { icon: "notifications-outline" as const, text: "update" };

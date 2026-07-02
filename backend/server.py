@@ -191,6 +191,7 @@ class PostCreate(BaseModel):
 
 class CommentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=1000)
+    parent_comment_id: Optional[str] = None
 
 
 class ReactionIn(BaseModel):
@@ -621,7 +622,7 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
         author = await db.users.find_one({"id": c["author_id"]}, {"_id": 0, "password": 0})
         reactions = c.get("reactions", {}) or {}
         reactors = c.get("reactors", {}) or {}
-        out.append({
+        entry = {
             "id": c["id"],
             "post_id": c["post_id"],
             "author": public_user(author) if author else {"id": c["author_id"], "alias": "Unknown"},
@@ -630,7 +631,16 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
             "up": reactions.get("up", 0),
             "down": reactions.get("down", 0),
             "my_reaction": reactors.get(user["id"]),
-        })
+            "parent_comment_id": c.get("parent_comment_id"),
+            "reply_to_alias": None,
+        }
+        if entry["parent_comment_id"]:
+            parent = await db.comments.find_one({"id": entry["parent_comment_id"]}, {"author_id": 1})
+            if parent:
+                parent_author = await db.users.find_one({"id": parent["author_id"]}, {"alias": 1})
+                if parent_author:
+                    entry["reply_to_alias"] = parent_author.get("alias")
+        out.append(entry)
     return out
 
 
@@ -639,6 +649,18 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
     p = await db.posts.find_one({"id": post_id})
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
+
+    # validate parent comment (if replying) — must belong to the same post
+    parent_author_id: Optional[str] = None
+    parent_author_alias: Optional[str] = None
+    if inp.parent_comment_id:
+        parent = await db.comments.find_one({"id": inp.parent_comment_id})
+        if not parent or parent.get("post_id") != post_id or parent.get("status") != "active":
+            raise HTTPException(status_code=404, detail="Parent comment not found")
+        parent_author_id = parent["author_id"]
+        pa = await db.users.find_one({"id": parent_author_id}, {"alias": 1})
+        parent_author_alias = pa.get("alias") if pa else None
+
     doc = {
         "id": new_id(),
         "post_id": post_id,
@@ -646,12 +668,14 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         "content": inp.content.strip(),
         "created_at": now().isoformat(),
         "status": "active",
+        "parent_comment_id": inp.parent_comment_id,
     }
     await db.comments.insert_one(doc)
     await db.posts.update_one({"id": post_id}, {"$inc": {"comment_count": 1}})
     await db.users.update_one({"id": user["id"]}, {"$inc": {"comment_count": 1}})
 
-    if p["author_id"] != user["id"]:
+    # notify post author on top-level comment
+    if not inp.parent_comment_id and p["author_id"] != user["id"]:
         await db.notifications.insert_one({
             "id": new_id(),
             "user_id": p["author_id"],
@@ -664,6 +688,20 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         })
         await ws_manager.send_to(p["author_id"], {"type": "notification"})
 
+    # notify parent-comment author on a reply
+    if parent_author_id and parent_author_id != user["id"]:
+        await db.notifications.insert_one({
+            "id": new_id(),
+            "user_id": parent_author_id,
+            "type": "reply",
+            "actor_alias": user["alias"],
+            "post_id": post_id,
+            "content_preview": inp.content[:80],
+            "created_at": now().isoformat(),
+            "read": False,
+        })
+        await ws_manager.send_to(parent_author_id, {"type": "notification"})
+
     return {
         "id": doc["id"],
         "post_id": post_id,
@@ -673,6 +711,8 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         "up": 0,
         "down": 0,
         "my_reaction": None,
+        "parent_comment_id": inp.parent_comment_id,
+        "reply_to_alias": parent_author_alias,
     }
 
 
@@ -986,7 +1026,12 @@ async def ws_endpoint(ws: WebSocket, token: str = Query(...)) -> None:
 # ---------- seed ----------
 @api.post("/dev/seed")
 async def seed_data() -> Dict[str, Any]:
-    """Seed demo users and posts. Idempotent-ish for demo purposes."""
+    """Seed demo users and posts. Idempotent-ish for demo purposes.
+
+    Disabled unless ENABLE_DEV_SEED=true in the environment.
+    """
+    if os.environ.get("ENABLE_DEV_SEED", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail="Not found")
     demo_users = [
         {"email": "demo1@huni.app", "password": "demo1234", "first_name": "Ana", "last_name": "Cruz", "birthdate": "1998-04-12"},
         {"email": "demo2@huni.app", "password": "demo1234", "first_name": "Ben", "last_name": "Reyes", "birthdate": "2000-11-03"},

@@ -1,62 +1,47 @@
-# Sibug — Product Requirements
+# Huni — Product Requirements (v1)
 
-## Product concept
-Sibug is a mobile-first anonymous social app for the Buug/Zamboanga Sibugay community in the Philippines. Users get a persistent alias, share thoughts by mood, run local pulse polls, comment (flat), react, and chat 1:1 — safely and anonymously.
+## Concept
+Anonymous, mobile-first discussion app for Buug, Zamboanga Sibugay (Philippines) and nearby. Persistent alias, mood-tagged posts, flat comments with replies, thumbs on comments, 1:1 realtime chat, local pulse polls, safety-first.
 
 ## Positioning
-"Ask honestly. Share freely. Stay anonymous. Respect others."
+> Honest. Local. Things.
 
-## MVP features implemented
-- **Auth**: email/password JWT + auto-generated persistent alias (regeneratable once per 7 days)
-- **Home feed** with 4 tabs: Latest · Trending · Nearby · Pulse
-- **Create Post** with 9 mood tags + audience (Public/Nearby) + Pulse polls
-- **Post detail** with flat comments and 4-emoji reactions (heart, helpful, hug, laugh)
-- **Pulse polls** with tap-to-vote and live percentages
-- **Notifications tab** (comments/reactions/messages) with unread badge
-- **1:1 realtime chat** via WebSockets (reconnects automatically)
-- **Profile** with alias, helpful score, posts, comments, bio, join date, recent posts
-- **Settings** with block list (unblock inline), privacy notes, logout
-- **Safety**: report post/comment/user, block user, kindness disclaimer on post composer
-- **Persistent alias** with locked identity (7-day cooldown to regenerate)
+## v1 features (shipped)
+- **Auth** — email/password JWT (first/last/birthdate/email/password) **and** hosted Google OAuth. Unified bearer accepts either token.
+- **Persistent alias** — auto-generated on signup, regeneratable once per 7 days.
+- **Feed** — 4 tabs: Latest · Trending · Nearby · Pulse. Blocked authors excluded.
+- **Post composer** — title (≤100) + content (≤2000) + 9 mood tags + audience (Public/Nearby) + optional Pulse poll options.
+- **Feed card** — title bold+bigger, content preview clipped with "...", one-liner top-3 reactions summary. Tap → detail to react.
+- **Post detail** — full content, 4 reactions (heart/helpful/hug/laugh), flat comments with replies, comment thumbs 👍👎 (up bumps commenter helpful_score).
+- **Comment replies** — flat structurally; each reply carries `parent_comment_id` and shows a "replying to @X" chip.
+- **1:1 chat** — WebSockets, block-aware, read receipts, unread badges.
+- **Notifications** — comment / reply / reaction / message with unread badge.
+- **Profile** — Posts | Comments toggle (Comments shows original threads deduped). Pull-to-refresh only (no auto-refresh). Bio + helpful/posts/comments stats. Logout via Settings only.
+- **Settings** — block list with inline unblock, privacy notes, logout.
+- **Safety** — block, report (post/comment/message/user), kindness banner on composer.
 
-## Tech stack
-- Backend: FastAPI + Motor (async MongoDB), PyJWT, bcrypt, WebSockets
-- Frontend: Expo Router (React Native, SDK 54), TypeScript, `@expo/vector-icons` (Ionicons), `react-native-safe-area-context`, `react-native-gesture-handler`, `expo-secure-store`, `AsyncStorage`
-- Design: Warm coral (#F06543) accent on cream (#FBF9F6) surface, Bento rounded cards, pill mood chips.
+## Tech
+- Backend: FastAPI · Motor (async MongoDB) · PyJWT · bcrypt · httpx · WebSockets
+- Frontend: Expo SDK 54 · TypeScript · expo-router · @expo/vector-icons · expo-secure-store · expo-web-browser · react-native-safe-area-context
+- Env-only credentials: `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_DAYS`, `EMERGENT_SESSION_URL`, `GOOGLE_SESSION_DAYS`, `ENABLE_DEV_SEED`
 
-## Backend endpoints (all under `/api`)
-- `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/regenerate-alias`, `PATCH /auth/bio`
-- `POST /posts`, `GET /posts?tab=`, `GET /posts/{id}`, `DELETE /posts/{id}`, `POST /posts/{id}/react`, `POST /posts/{id}/pulse-vote`
-- `GET /posts/{id}/comments`, `POST /posts/{id}/comments`, `DELETE /comments/{id}`
-- `GET /notifications`, `POST /notifications/read-all`, `GET /notifications/unread-count`
-- `GET /users/{id}`, `GET /users/{id}/posts`
-- `POST /chat/start`, `GET /chat/conversations`, `GET /chat/{id}/messages`, `POST /chat/{id}/messages`
-- `POST /block`, `DELETE /block/{target_id}`, `GET /block`, `POST /report`
-- `WS /ws?token=` for realtime chat + notification pings
-- `POST /dev/seed` for demo data
+## Data model
+`users`, `user_sessions` (TTL), `posts`, `comments` (+`parent_comment_id`), `notifications`, `conversations`, `messages`, `blocks`, `reports`. Indexes on startup.
 
-## Monetization ideas (anonymity-safe)
-1. Local business "Pulse spotlight" — a business can buy a highlighted pulse poll slot (no user targeting).
-2. Optional supporter tier for badges + longer post length (no ads, aliases still anonymous).
-3. Anonymous classifieds inside the "Buy/Sell" mood (per-post promotion fee).
+## Deploy checklist (v1)
+- [x] `POST /api/dev/seed` gated behind `ENABLE_DEV_SEED=true`
+- [x] All credentials in env files, `.env.example` provided
+- [x] `README.md` with full docs
+- [x] Google Auth + email auth verified end-to-end (48+ pytest, all green)
+- [ ] Rotate `JWT_SECRET` in production
+- [ ] Set `ENABLE_DEV_SEED=false` (or unset) in production
+- [ ] Trigger native iOS/Android build for real device testing
 
-## Launch strategies for Buug
-1. Seed content via local college groups.
-2. Distribute physical QR posters at the Buug plaza, coffee shops, terminals.
-3. Barangay-style "ask anything" livestreams that pull top pulse questions.
-4. Partner with local FB pages to cross-promote confessions & safety alerts.
-5. Local moderators recruited from long-time helpful-score users.
-
-## Risks & mitigations
-1. Trolls & harassment → block/report + rate limiting (ready in backend structure).
-2. Doxxing → moderation-ready reports + explicit warning at composer.
-3. Slow low-end Android → no blur, no gradients on lists, solid surfaces.
-4. Empty-feed cold start → seed script + local moderator posts.
-5. Legal concerns (Safety Concern posts) → moderation queue + admin architecture ready.
-
-## v2 features to add later
-- Image posting (base64) with NSFW filter
-- School/work circle audience
-- Real-time typing indicators in chat
-- Toxicity nudge (kindness friction) via LLM
-- Public admin/moderation dashboard
+## v2 backlog
+- Image posting (base64)
+- Kindness-nudge LLM at composer time
+- Push notifications
+- Admin/moderation dashboard
+- Comment sort by score (up - down)
+- Rate limiting (slowapi)
+- Optional monetization: paid Pulse Spotlight for local businesses

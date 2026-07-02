@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
-import {
+import React, { useCallback, useEffect, useState } from "react";import {
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
@@ -28,6 +27,8 @@ type Comment = {
   up: number;
   down: number;
   my_reaction: "up" | "down" | null;
+  parent_comment_id?: string | null;
+  reply_to_alias?: string | null;
 };
 
 function timeAgo(iso: string) {
@@ -49,6 +50,8 @@ export default function PostDetail() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [replyTo, setReplyTo] = useState<Comment | null>(null);
+  const inputRef = React.useRef<TextInput>(null);
 
   const load = useCallback(async () => {
     try {
@@ -71,15 +74,23 @@ export default function PostDetail() {
     if (!text.trim() || sending) return;
     setSending(true);
     try {
-      const c = await api.post<Comment>(`/posts/${id}/comments`, { content: text.trim() });
+      const body: Record<string, unknown> = { content: text.trim() };
+      if (replyTo) body.parent_comment_id = replyTo.id;
+      const c = await api.post<Comment>(`/posts/${id}/comments`, body);
       setComments((prev) => [...prev, c]);
       setText("");
+      setReplyTo(null);
       if (post) setPost({ ...post, comment_count: (post.comment_count || 0) + 1 });
     } catch {
       // ignore
     } finally {
       setSending(false);
     }
+  };
+
+  const startReply = (c: Comment) => {
+    setReplyTo(c);
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   const doReport = async () => {
@@ -191,6 +202,12 @@ export default function PostDetail() {
                   <Text style={styles.cAlias}>{item.author.alias}</Text>
                   <Text style={styles.cTime}>{timeAgo(item.created_at)}</Text>
                 </View>
+                {!!item.reply_to_alias && (
+                  <View style={styles.replyChip} testID={`comment-reply-chip-${item.id}`}>
+                    <Ionicons name="return-down-forward-outline" size={12} color={colors.brand} />
+                    <Text style={styles.replyChipText}>replying to {item.reply_to_alias}</Text>
+                  </View>
+                )}
                 <Text style={styles.cBody}>{item.content}</Text>
                 <View style={styles.commentReactRow}>
                   <Pressable
@@ -229,24 +246,46 @@ export default function PostDetail() {
                     />
                     <Text style={[styles.voteCount, item.my_reaction === "down" && { color: colors.error }]}>{item.down}</Text>
                   </Pressable>
+                  <Pressable
+                    onPress={() => startReply(item)}
+                    style={styles.replyBtn}
+                    testID={`comment-reply-${item.id}`}
+                    hitSlop={6}
+                  >
+                    <Ionicons name="chatbubble-outline" size={13} color={colors.brand} />
+                    <Text style={styles.replyBtnText}>Reply</Text>
+                  </Pressable>
                 </View>
               </View>
             </View>
           )}
         />
         <View style={styles.inputBar}>
-          <TextInput
-            testID="comment-input"
-            value={text}
-            onChangeText={setText}
-            placeholder="Add a kind comment..."
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-            multiline
-          />
-          <Pressable onPress={submit} disabled={!text.trim() || sending} style={styles.sendBtn} testID="send-comment-btn">
-            <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
-          </Pressable>
+          {replyTo && (
+            <View style={styles.replyBanner} testID="reply-banner">
+              <Text style={styles.replyBannerText} numberOfLines={1}>
+                Replying to <Text style={{ fontWeight: "700" }}>{replyTo.author.alias}</Text>
+              </Text>
+              <Pressable onPress={() => setReplyTo(null)} testID="cancel-reply-btn" hitSlop={8}>
+                <Ionicons name="close" size={16} color={colors.onSurface} />
+              </Pressable>
+            </View>
+          )}
+          <View style={styles.inputRow}>
+            <TextInput
+              testID="comment-input"
+              ref={inputRef}
+              value={text}
+              onChangeText={setText}
+              placeholder={replyTo ? `Reply to ${replyTo.author.alias}...` : "Add a kind comment..."}
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              multiline
+            />
+            <Pressable onPress={submit} disabled={!text.trim() || sending} style={styles.sendBtn} testID="send-comment-btn">
+              <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -287,9 +326,50 @@ const styles = StyleSheet.create({
   voteBtnUp: { backgroundColor: "#DFF1DF" },
   voteBtnDown: { backgroundColor: "#F8D7D7" },
   voteCount: { fontSize: font.sm, color: colors.muted, fontWeight: "600" },
+  replyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  replyBtnText: { fontSize: font.sm, color: colors.brand, fontWeight: "700" },
+  replyChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    backgroundColor: colors.brandTertiary,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  replyChipText: { fontSize: 11, color: colors.onBrandTertiary, fontWeight: "600" },
+  replyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    backgroundColor: colors.brandTertiary,
+    borderTopLeftRadius: radius.md,
+    borderTopRightRadius: radius.md,
+  },
+  replyBannerText: { color: colors.onBrandTertiary, fontSize: font.sm, flex: 1 },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.sm,
+  },
   inputBar: {
-    flexDirection: "row", alignItems: "flex-end", gap: spacing.sm,
-    padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
+    padding: spacing.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: spacing.sm,
   },
   input: {
     flex: 1, backgroundColor: colors.surface, borderRadius: radius.lg,

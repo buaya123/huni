@@ -14,7 +14,7 @@ type CommentedPost = Post & { my_comment_preview?: string; my_comment_at?: strin
 
 export default function Profile() {
   const router = useRouter();
-  const { user, refresh, signOut, regenerateAlias, updateBio } = useAuth();
+  const { user, refresh, regenerateAlias, updateBio } = useAuth();
   const [tab, setTab] = useState<"posts" | "comments">("posts");
   const [posts, setPosts] = useState<Post[]>([]);
   const [commented, setCommented] = useState<CommentedPost[]>([]);
@@ -199,12 +199,6 @@ export default function Profile() {
           </View>
         )}
 
-        <View style={{ padding: spacing.lg }}>
-          <Pressable style={styles.logoutBtn} onPress={signOut} testID="logout-btn">
-            <Ionicons name="log-out-outline" size={18} color={colors.error} />
-            <Text style={styles.logoutText}>Log out</Text>
-          </Pressable>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -284,10 +278,4 @@ const styles = StyleSheet.create({
   myCommentText: { flex: 1, color: colors.onBrandTertiary, fontSize: font.sm, fontStyle: "italic" },
   threadFooter: { flexDirection: "row", gap: spacing.sm, marginTop: 2 },
   threadStat: { fontSize: font.sm, color: colors.muted },
-
-  logoutBtn: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
-    padding: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
-  },
-  logoutText: { color: colors.error, fontWeight: "700", fontSize: font.base },
 });

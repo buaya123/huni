@@ -122,7 +122,7 @@ export default function PostDetail() {
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12} testID="back-btn">
+        <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)/home"); }} hitSlop={12} testID="back-btn">
           <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>Post</Text>

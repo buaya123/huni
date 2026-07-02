@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 2 testing for Huni rebrand + Comments-tab feature + back-button-logout bug. Backend: 20/20 pytests pass, including new /api/users/{id}/commented-posts endpoint (dedup, hydration, exclude-deleted). Frontend rebrand ('Huni', 'hu.', 'Whisper honestly', 'Whispers · Local · Kind') verified. Tab order verified visually: Home | Alerts | Create | Messages | Profile. Profile Comments tab works (screenshot shows 'Comments (2)' with 2 deduped threads and 'you: ...' chip). CRITICAL FAIL: BUG FIX 1 back-button-logs-out is NOT fixed — after Create->Post detail->Back, page body still contains welcome/signup text ('Create account' + 'I already have an account'). Same for Settings->Back.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "post/[id].tsx back button", "issue": "After router.replace('/(tabs)/home') + router.push('/post/{id}') in create.tsx, pressing back on post detail still ends up on welcome/signup screen (user perceives it as logout). router.canGoBack() likely returns true but the previous history entry is welcome, not home tab.", "testID": "back-btn", "priority": "CRITICAL"},
+      {"component": "settings.tsx back button", "issue": "Back button from settings screen also lands on welcome/signup — same canGoBack fallback problem across secondary screens.", "testID": "back-btn", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Create post -> post detail -> back", "issue": "Navigation replace+push pattern breaks history: back goes to pre-tabs route (welcome). Consider replacing the setTimeout push with router.replace('/post/{id}') so history remains [tabs, post-detail], or explicitly navigate to '/(tabs)/home' on back without relying on canGoBack.", "affected_testIDs": ["post-submit-btn", "back-btn"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_huni_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "CRITICAL: Fix back-button on /post/[id].tsx so it never lands on welcome. Root cause: create.tsx does router.replace('/(tabs)/home') then setTimeout(router.push('/post/{id}'),50). On web this can leave welcome as the previous history entry. Recommended fix: in post/[id].tsx replace `if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home')` with a check that also validates we can go back to a tabs route, OR change create.tsx to `router.replace('/post/{id}')` (skip the intermediate replace to home).",
+    "Same fix applies to /settings.tsx, /chat/[id].tsx, /user/[id].tsx back buttons — verify each falls back to '/(tabs)/home' if the previous history entry is /welcome, /login or /signup.",
+    "Optional: add tabBarButtonTestID mapping so the tab bar's <button> elements expose data-testid on web (currently tabBarTestID is not applied to the DOM button — I verified tab order by pixel-x-position and screenshot instead)."
+  ],
+  "critical_code_review_comments": [
+    "create.tsx line 55-57: router.replace('/(tabs)/home') + setTimeout(router.push(`/post/${id}`), 50) is fragile; on web the intermediate frame can leave welcome in history. Prefer router.replace(`/post/${id}`) after guaranteeing the auth guard in tabs won't reroute.",
+    "post/[id].tsx line 125: `if (router.canGoBack()) router.back()` — canGoBack can return true even when the previous entry is an unauthenticated screen. A safer pattern is to explicitly navigate to a known safe tab: `router.replace('/(tabs)/home')` unconditionally, or check the route name of the previous entry."
+  ],
+  "updated_files": ["/app/backend/tests/test_huni_api.py (new; replaces test_sibug_api.py)"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "75% (rebrand+tabs+comments-tab OK; back-button-logout bug still present)"},
+  "seed_data_creation": "Called POST /api/dev/seed which created demo1/2/3@huni.app + 7 sample posts + 1 pulse post. Tests also register ephemeral TEST_ users.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend suite: `pytest /app/backend/tests/test_huni_api.py -v`. Frontend: use welcome-signup-btn -> signup-email-input/signup-password-input/signup-submit-btn. Post detail back-btn is the critical bug. Tabs testIDs (tab-home etc.) do NOT appear as data-testid on the tab bar buttons on web — use text-based selectors like page.get_by_text('Create') or the pixel-x-position heuristic to verify tab order.",
+  "rca_of_issue": "BUG FIX 1 root cause: create.tsx submit() does `router.replace('/(tabs)/home')` immediately followed by `setTimeout(() => router.push('/post/{id}'), 50)`. On Expo Router web, this creates a history like [welcome, home(replaced), post]. When user hits back on post detail, `router.canGoBack()` returns true and back navigates to what history considers previous — which on web can be welcome (because the replace didn't fully consume it in a single frame). The auth guard in (tabs)/_layout.tsx does `router.replace('/welcome')` if !user, but that isn't the trigger here; the trigger is history pointing back to welcome directly. Reproduction: fresh signup -> Create tab -> submit any post -> tap back on post detail -> observe welcome screen. Mitigation: change create.tsx to `router.replace(`/post/${id}`)` (single hop), or in post/[id].tsx replace canGoBack check with an unconditional `router.replace('/(tabs)/home')`."
+}

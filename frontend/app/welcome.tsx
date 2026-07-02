@@ -10,10 +10,10 @@ export default function Welcome() {
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
       <View style={styles.top}>
         <View style={styles.badge} testID="welcome-logo">
-          <Text style={styles.badgeText}>si.</Text>
+          <Text style={styles.badgeText}>hu.</Text>
         </View>
-        <Text style={styles.title}>Sibug</Text>
-        <Text style={styles.tagline}>Ask honestly. Share freely. Stay anonymous. Respect others.</Text>
+        <Text style={styles.title}>Huni</Text>
+        <Text style={styles.tagline}>Whisper honestly. Share freely. Stay anonymous. Respect others.</Text>
       </View>
 
       <View style={styles.pointsBox}>

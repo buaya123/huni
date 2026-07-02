@@ -80,16 +80,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="create"
-        options={{
-          title: "Create",
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "add-circle" : "add-circle-outline"} size={26} color={color} />
-          ),
-          tabBarTestID: "tab-create",
-        }}
-      />
-      <Tabs.Screen
         name="notifications"
         options={{
           title: "Alerts",
@@ -100,6 +90,16 @@ export default function TabsLayout() {
             </View>
           ),
           tabBarTestID: "tab-notifications",
+        }}
+      />
+      <Tabs.Screen
+        name="create"
+        options={{
+          title: "Create",
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? "add-circle" : "add-circle-outline"} size={26} color={color} />
+          ),
+          tabBarTestID: "tab-create",
         }}
       />
       <Tabs.Screen

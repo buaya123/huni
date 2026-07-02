@@ -44,12 +44,12 @@ JWT_EXPIRE_DAYS = int(os.environ["JWT_EXPIRE_DAYS"])
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-app = FastAPI(title="Sibug API")
+app = FastAPI(title="Huni API")
 api = APIRouter(prefix="/api")
 bearer = HTTPBearer(auto_error=False)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("sibug")
+log = logging.getLogger("huni")
 
 
 # ---------- helpers ----------
@@ -223,7 +223,7 @@ ws_manager = WSManager()
 # ---------- routes: root/health ----------
 @api.get("/")
 async def root() -> Dict[str, str]:
-    return {"app": "Sibug", "status": "ok"}
+    return {"app": "Huni", "status": "ok"}
 
 
 # ---------- routes: auth ----------
@@ -562,6 +562,30 @@ async def user_posts(user_id: str, user: Dict[str, Any] = Depends(get_current_us
     return [await _hydrate_post(p, user["id"]) for p in rows]
 
 
+@api.get("/users/{user_id}/commented-posts")
+async def user_commented_posts(user_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    """Return posts that the given user has commented on (deduped, latest-comment first)."""
+    # gather distinct post_ids from user's active comments, keep newest per post
+    pipeline = [
+        {"$match": {"author_id": user_id, "status": "active"}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$post_id", "latest_comment_at": {"$first": "$created_at"}, "my_comment": {"$first": "$content"}}},
+        {"$sort": {"latest_comment_at": -1}},
+        {"$limit": 50},
+    ]
+    grouped = await db.comments.aggregate(pipeline).to_list(50)
+    out: List[Dict[str, Any]] = []
+    for row in grouped:
+        post = await db.posts.find_one({"id": row["_id"], "status": "active"}, {"_id": 0})
+        if not post:
+            continue
+        hydrated = await _hydrate_post(post, user["id"])
+        hydrated["my_comment_preview"] = row["my_comment"][:120]
+        hydrated["my_comment_at"] = row["latest_comment_at"]
+        out.append(hydrated)
+    return out
+
+
 # ---------- routes: chat ----------
 def conv_id(a: str, b: str) -> str:
     return "-".join(sorted([a, b]))
@@ -761,9 +785,9 @@ async def ws_endpoint(ws: WebSocket, token: str = Query(...)) -> None:
 async def seed_data() -> Dict[str, Any]:
     """Seed demo users and posts. Idempotent-ish for demo purposes."""
     demo_users = [
-        {"email": "demo1@sibug.app", "password": "demo1234"},
-        {"email": "demo2@sibug.app", "password": "demo1234"},
-        {"email": "demo3@sibug.app", "password": "demo1234"},
+        {"email": "demo1@huni.app", "password": "demo1234"},
+        {"email": "demo2@huni.app", "password": "demo1234"},
+        {"email": "demo3@huni.app", "password": "demo1234"},
     ]
     created_users = []
     for du in demo_users:
@@ -869,7 +893,7 @@ async def on_startup() -> None:
     await db.conversations.create_index("participants")
     await db.messages.create_index("conversation_id")
     await db.blocks.create_index([("blocker_id", 1), ("target_user_id", 1)])
-    log.info("Sibug API started")
+    log.info("Huni API started")
 
 
 @app.on_event("shutdown")

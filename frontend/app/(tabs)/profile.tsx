@@ -10,10 +10,14 @@ import { PostCard, type Post } from "@/src/components/PostCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
+type CommentedPost = Post & { my_comment_preview?: string; my_comment_at?: string };
+
 export default function Profile() {
   const router = useRouter();
   const { user, refresh, signOut, regenerateAlias, updateBio } = useAuth();
+  const [tab, setTab] = useState<"posts" | "comments">("posts");
   const [posts, setPosts] = useState<Post[]>([]);
+  const [commented, setCommented] = useState<CommentedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingBio, setEditingBio] = useState(false);
   const [bio, setBio] = useState("");
@@ -21,11 +25,17 @@ export default function Profile() {
 
   const load = useCallback(async () => {
     if (!user) return;
+    setLoading(true);
     try {
-      const rows = await api.get<Post[]>(`/users/${user.id}/posts`);
-      setPosts(rows);
+      const [ps, cps] = await Promise.all([
+        api.get<Post[]>(`/users/${user.id}/posts`),
+        api.get<CommentedPost[]>(`/users/${user.id}/commented-posts`),
+      ]);
+      setPosts(ps);
+      setCommented(cps);
     } catch {
       setPosts([]);
+      setCommented([]);
     } finally {
       setLoading(false);
     }
@@ -51,9 +61,7 @@ export default function Profile() {
     try {
       await updateBio(bio);
       setEditingBio(false);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   };
 
   const joined = user.joined_at ? new Date(user.joined_at).toLocaleDateString() : "";
@@ -116,15 +124,64 @@ export default function Profile() {
           {regenNote && <Text style={styles.regenNote}>{regenNote}</Text>}
         </View>
 
-        <Text style={styles.sectionTitle}>Your posts</Text>
+        <View style={styles.tabs}>
+          <Pressable
+            onPress={() => setTab("posts")}
+            style={[styles.tab, tab === "posts" && styles.tabActive]}
+            testID="profile-tab-posts"
+          >
+            <Text style={[styles.tabText, tab === "posts" && styles.tabTextActive]}>Posts ({posts.length})</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setTab("comments")}
+            style={[styles.tab, tab === "comments" && styles.tabActive]}
+            testID="profile-tab-comments"
+          >
+            <Text style={[styles.tabText, tab === "comments" && styles.tabTextActive]}>Comments ({commented.length})</Text>
+          </Pressable>
+        </View>
+
         {loading ? (
           <View style={{ padding: spacing.xl, alignItems: "center" }}><ActivityIndicator color={colors.brand} /></View>
-        ) : posts.length === 0 ? (
-          <EmptyState title="No posts yet." subtitle="Share your first thought from the Create tab." />
+        ) : tab === "posts" ? (
+          posts.length === 0 ? (
+            <EmptyState title="No posts yet." subtitle="Share your first whisper from the Create tab." />
+          ) : (
+            <View style={{ paddingHorizontal: spacing.lg }}>
+              {posts.map((p) => (
+                <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} compact />
+              ))}
+            </View>
+          )
+        ) : commented.length === 0 ? (
+          <EmptyState title="No commented posts yet." subtitle="When you comment on a post, it lands here so you can return anytime." />
         ) : (
-          <View style={{ paddingHorizontal: spacing.lg }}>
-            {posts.map((p) => (
-              <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} compact />
+          <View style={{ paddingHorizontal: spacing.lg, gap: spacing.md }}>
+            {commented.map((p) => (
+              <Pressable
+                key={p.id}
+                onPress={() => router.push(`/post/${p.id}`)}
+                style={styles.threadCard}
+                testID={`commented-thread-${p.id}`}
+              >
+                <View style={styles.threadHead}>
+                  <Avatar alias={p.author.alias} size={28} />
+                  <Text style={styles.threadAlias} numberOfLines={1}>{p.author.alias}</Text>
+                  <Text style={styles.threadMood}>{p.mood.replace("_", " ")}</Text>
+                </View>
+                <Text style={styles.threadContent} numberOfLines={2}>{p.content}</Text>
+                {p.my_comment_preview && (
+                  <View style={styles.myCommentRow}>
+                    <Ionicons name="return-down-forward-outline" size={14} color={colors.brand} />
+                    <Text style={styles.myCommentText} numberOfLines={1}>you: {p.my_comment_preview}</Text>
+                  </View>
+                )}
+                <View style={styles.threadFooter}>
+                  <Text style={styles.threadStat}>{p.comment_count} comments</Text>
+                  <Text style={styles.threadStat}>·</Text>
+                  <Text style={styles.threadStat}>{p.reaction_total} reactions</Text>
+                </View>
+              </Pressable>
             ))}
           </View>
         )}
@@ -185,7 +242,36 @@ const styles = StyleSheet.create({
   },
   smallBtnGhost: { backgroundColor: colors.surfaceTertiary },
   smallBtnText: { color: "#FFF", fontWeight: "700" },
-  sectionTitle: { fontSize: font.lg, fontWeight: "700", color: colors.onSurface, paddingHorizontal: spacing.lg, marginTop: spacing.xl, marginBottom: spacing.sm },
+
+  tabs: {
+    flexDirection: "row",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xl,
+    marginBottom: spacing.md,
+    backgroundColor: colors.surfaceTertiary,
+    borderRadius: radius.pill,
+    padding: 4,
+  },
+  tab: { flex: 1, paddingVertical: 8, borderRadius: radius.pill, alignItems: "center" },
+  tabActive: { backgroundColor: colors.surfaceSecondary },
+  tabText: { color: colors.onSurfaceTertiary, fontWeight: "600", fontSize: font.sm },
+  tabTextActive: { color: colors.onSurface, fontWeight: "700" },
+
+  threadCard: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  threadHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  threadAlias: { fontWeight: "700", color: colors.onSurface, flex: 1 },
+  threadMood: { fontSize: font.sm, color: colors.brand, fontWeight: "700", textTransform: "capitalize" },
+  threadContent: { fontSize: font.base, color: colors.onSurface, lineHeight: 20 },
+  myCommentRow: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.sm },
+  myCommentText: { flex: 1, color: colors.onBrandTertiary, fontSize: font.sm, fontStyle: "italic" },
+  threadFooter: { flexDirection: "row", gap: spacing.sm, marginTop: 2 },
+  threadStat: { fontSize: font.sm, color: colors.muted },
+
   logoutBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
     padding: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,

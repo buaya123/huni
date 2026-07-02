@@ -1,0 +1,189 @@
+{
+  "app_name": "Sibug",
+  "personality": "4 Tactile / Playful LIGHT",
+  "personality_one_liner": "A calm, safe, and youthful sanctuary with soft neutrals, gentle curves, and a warm local PH feel—free of sharp edges and loud UI.",
+  "color": {
+    "surface": "#FBF9F6",
+    "onSurface": "#2A2826",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#2A2826",
+    "surfaceTertiary": "#F2EFEA",
+    "onSurfaceTertiary": "#4A4744",
+    "surfaceInverse": "#2A2826",
+    "onSurfaceInverse": "#FBF9F6",
+    "brand": "#F06543",
+    "brandPrimary": "#F06543",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#FF8C70",
+    "onBrandSecondary": "#2A2826",
+    "brandTertiary": "#FCE8E3",
+    "onBrandTertiary": "#D44C2B",
+    "success": "#3A824A",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D99318",
+    "onWarning": "#FFFFFF",
+    "error": "#D43B3B",
+    "onError": "#FFFFFF",
+    "info": "#4A4744",
+    "onInfo": "#FFFFFF",
+    "border": "#E8E4DF",
+    "borderStrong": "#D1CAC2",
+    "divider": "#F2EFEA",
+    "dark": {
+      "surface": "#1A1918",
+      "onSurface": "#F4F0EA",
+      "surfaceSecondary": "#242220",
+      "onSurfaceSecondary": "#F4F0EA",
+      "surfaceTertiary": "#2E2C2A",
+      "onSurfaceTertiary": "#AFAAA4",
+      "surfaceInverse": "#F4F0EA",
+      "onSurfaceInverse": "#1A1918",
+      "brand": "#F06543",
+      "brandPrimary": "#FF7A59",
+      "onBrandPrimary": "#1A1918",
+      "brandSecondary": "#FF9D82",
+      "onBrandSecondary": "#1A1918",
+      "brandTertiary": "#3B241E",
+      "onBrandTertiary": "#FF9D82",
+      "success": "#4C9E5E",
+      "onSuccess": "#1A1918",
+      "warning": "#F2A922",
+      "onWarning": "#1A1918",
+      "error": "#E84E4E",
+      "onError": "#1A1918",
+      "info": "#AFAAA4",
+      "onInfo": "#1A1918",
+      "border": "#3A3735",
+      "borderStrong": "#4F4B49",
+      "divider": "#2E2C2A"
+    }
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous breathing room. No elements flush to the edge. All cards have lg margin. Empty space is used purposefully.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [
+      "Use solid surfaceSecondary with slight elevation for bottom bars and headers to ensure high performance on low-end Android."
+    ],
+    "dont's": [
+      "Avoid heavy blur filters or frosted glass, as they degrade low-end Android performance."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "solid surfaceSecondary",
+      "android": "solid surfaceSecondary",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "none",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home Feed",
+      "purpose": "A curated stream of anonymous posts focused strictly on content, easily filterable by mood.",
+      "states": {
+        "loading": "Centered spinner, no text.",
+        "empty": "Warm, abstract painted illustration + 'No stories here yet. Be the first to share.' + Primary CTA 'Create Post'.",
+        "error": "Readable error message + 'Retry' button in primary brand color."
+      },
+      "layout": "Sticky top horizontal scrolling row for mood filter chips (pill shape). Cards are completely rounded (lg radius, shadow tier 1) sitting on surface. No sharp borders. Each card removes user identity, highlighting the mood chip and text content."
+    },
+    {
+      "name": "Create Post",
+      "purpose": "A calm, focused input screen to draft anonymous thoughts and select a mood.",
+      "states": {
+        "loading": "Spinner on the submit button.",
+        "empty": "Input field ready with placeholder 'What's on your mind?'.",
+        "error": "Inline text below input with error info."
+      },
+      "layout": "Bottom-sheet style or full screen form. Mood tags are selectable pills wrapping in a flex row. Text area is large, borderless, sitting directly on surfaceSecondary. Fixed 'Post' CTA button at the bottom above safe area."
+    },
+    {
+      "name": "Messages",
+      "purpose": "1:1 real-time anonymous chats with distinct, clean bubbles.",
+      "states": {
+        "loading": "Centered spinner.",
+        "empty": "Soft leaf shadow graphic + 'No messages yet. Start a chat from a post.'",
+        "error": "Standard error view with retry button."
+      },
+      "layout": "Flat list of active chats using rounded cards for list items. Chat detail uses Soft-Neumorph or Flat rounded bubbles (radius 20px) with high contrast text. Input bar is a rounded card at the bottom."
+    },
+    {
+      "name": "Profile",
+      "purpose": "View alias, helpful score, and history of anonymous activity in a safe space.",
+      "states": {
+        "loading": "Skeleton loader for stats and tabs.",
+        "empty": "Graphic + 'No activity yet. Engage to build your helpful score.'",
+        "error": "Retry state."
+      },
+      "layout": "Top banner uses the 'profile_banner' abstract texture with a gradient scrim. Avatar is a colored circle with alias initials. Stats (Helpful score, join date) are contained in a 2-col bento grid of rounded cards."
+    }
+  ],
+  "images": {
+    "empty_state_illustration": {
+      "url": "https://images.unsplash.com/photo-1563291074-2bf8677ac0e5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHx3YXJtJTIwbWluaW1hbGlzdCUyMGFic3RyYWN0JTIwdGV4dHVyZXxlbnwwfHx8fDE3ODI5NTk5MjJ8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1777051245694-fcfc6f97fbf3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwzfHx3YXJtJTIwbWluaW1hbGlzdCUyMGFic3RyYWN0JTIwdGV4dHVyZXxlbnwwfHx8fDE3ODI5NTk5MjJ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Soft pink and orange paint textures representing warmth and safety"
+    },
+    "profile_banner": {
+      "url": "https://images.unsplash.com/photo-1714636608872-048fc9231892?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwyfHx3YXJtJTIwbWluaW1hbGlzdCUyMGFic3RyYWN0JTIwdGV4dHVyZXxlbnwwfHx8fDE3ODI5NTk5MjJ8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1777051245694-fcfc6f97fbf3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwzfHx3YXJtJTIwbWluaW1hbGlzdCUyMGFic3RyYWN0JTIwdGV4dHVyZXxlbnwwfHx8fDE3ODI5NTk5MjJ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Wavy white cream minimal design"
+    },
+    "empty_messages": {
+      "url": "https://images.unsplash.com/photo-1530177150700-84cd9a3b059b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w8NjA1NTN8MHwxfHNlYXJjaHwxfHx0cm9waWNhbCUyMG1pbmltYWwlMjBsZWFmJTIwc2hhZG93fGVufDB8fHx8MTc4Mjk1OTkyMXww&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimal tropical leaf shadow on a light wall"
+    }
+  },
+  "haptics": {
+    "events": {
+      "tab_press": "light",
+      "mood_tag_select": "light",
+      "post_submit": "success",
+      "reaction_toggle": "medium",
+      "send_message": "light"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the NO PURPLE/BLUE rule. The primary accent is a warm Burnt Coral/Mango (#F06543). All UI elements must derive from the provided color palette.",
+    "Performance constraint: Do not use `expo-blur` or any glassmorphism effects. The app is targeted for low-end Androids in Buug, PH. Rely on solid surface hierarchy (`surfaceSecondary` for cards) and subtle Shadow Tier 1 for elevation.",
+    "Implement 'Bento style' completely rounded cards (radius 20px) for feed items to keep the feel safe and tactile.",
+    "Mood tags MUST be prominent interactive pills. Use `brandTertiary` background with `onBrandTertiary` text for selected state, and `surfaceTertiary` for unselected state.",
+    "Images serving as backgrounds (like profile_banner) MUST use the required gradient-to-dark scrim pattern (top-to-bottom transparent to surfaceInverse) to guarantee text contrast.",
+    "For avatars, generate simple colored circles with the user's alias initials. No generic user icons.",
+    "The primary action (Create Post) should be accessible either via bottom tab or a sticky FAB. If sticky FAB, place it above the safe area at the bottom right.",
+    "Every icon must use the Phosphor icon set consistently. Maintain the same weight (e.g., 'regular') throughout the app, except for active bottom tabs which can be 'fill'."
+  ]
+}

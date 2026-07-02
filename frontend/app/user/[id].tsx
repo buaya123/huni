@@ -112,7 +112,7 @@ export default function UserProfile() {
           {posts.length === 0 ? (
             <Text style={{ color: colors.muted, textAlign: "center", padding: spacing.lg }}>No posts yet.</Text>
           ) : (
-            posts.map((p) => <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} compact />)
+            posts.map((p) => <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} />)
           )}
         </View>
       </ScrollView>

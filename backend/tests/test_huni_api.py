@@ -105,7 +105,7 @@ class TestPostCRUD:
     def test_create_and_get(self):
         token, user, _ = _register()
         r = requests.post(f"{API}/posts", headers=_headers(token), json={
-            "content": "TEST hello huni", "mood": "hot_take", "audience": "public"
+            "title": "TEST hello", "content": "TEST hello huni", "mood": "hot_take", "audience": "public"
         })
         assert r.status_code == 200, r.text
         pid = r.json()["id"]
@@ -116,7 +116,7 @@ class TestPostCRUD:
 
     def test_reaction_toggle(self):
         token, _, _ = _register()
-        r = requests.post(f"{API}/posts", headers=_headers(token), json={"content": "reactme", "mood": "question"})
+        r = requests.post(f"{API}/posts", headers=_headers(token), json={"title": "TEST reactme", "content": "reactme", "mood": "question"})
         pid = r.json()["id"]
         # another user reacts
         t2, _, _ = _register()
@@ -130,7 +130,7 @@ class TestPostCRUD:
     def test_pulse_vote(self):
         token, _, _ = _register()
         r = requests.post(f"{API}/posts", headers=_headers(token), json={
-            "content": "pulse?", "mood": "pulse", "pulse_options": ["A", "B"]
+            "title": "TEST pulse", "content": "pulse?", "mood": "pulse", "pulse_options": ["A", "B"]
         })
         pid = r.json()["id"]
         v = requests.post(f"{API}/posts/{pid}/pulse-vote", headers=_headers(token), json={"option_index": 1})
@@ -173,7 +173,7 @@ class TestCommentedPosts:
     def test_commented_posts_excludes_deleted(self):
         token, user, _ = _register()
         # create my own post
-        r = requests.post(f"{API}/posts", headers=_headers(token), json={"content": "TEST mine", "mood": "question"})
+        r = requests.post(f"{API}/posts", headers=_headers(token), json={"title": "TEST mine", "content": "TEST mine", "mood": "question"})
         pid = r.json()["id"]
         # another user comments
         t2, u2, _ = _register()
@@ -194,7 +194,7 @@ class TestNotifications:
     def test_unread_and_read_all(self):
         # setup: user A gets a reaction from user B
         tA, uA, _ = _register()
-        p = requests.post(f"{API}/posts", headers=_headers(tA), json={"content": "notif me", "mood": "question"}).json()
+        p = requests.post(f"{API}/posts", headers=_headers(tA), json={"title": "TEST notif me", "content": "notif me", "mood": "question"}).json()
         tB, _, _ = _register()
         requests.post(f"{API}/posts/{p['id']}/react", headers=_headers(tB), json={"kind": "heart"})
         time.sleep(0.3)

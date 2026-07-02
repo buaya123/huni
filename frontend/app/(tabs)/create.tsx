@@ -18,6 +18,7 @@ import { colors, font, MOODS, radius, spacing } from "@/src/theme/tokens";
 
 export default function CreatePost() {
   const router = useRouter();
+  const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [mood, setMood] = useState<string>("question");
   const [audience, setAudience] = useState<"public" | "nearby">("public");
@@ -26,8 +27,13 @@ export default function CreatePost() {
   const [error, setError] = useState<string | null>(null);
 
   const isPulse = mood === "pulse";
+  const TITLE_MAX = 100;
 
   const submit = async () => {
+    if (!title.trim()) {
+      setError("Please add a title.");
+      return;
+    }
     if (!content.trim()) {
       setError("Please write something.");
       return;
@@ -36,6 +42,7 @@ export default function CreatePost() {
     setError(null);
     try {
       const body: Record<string, unknown> = {
+        title: title.trim(),
         content: content.trim(),
         mood,
         audience,
@@ -50,6 +57,7 @@ export default function CreatePost() {
         body.pulse_options = opts;
       }
       const post = await api.post<{ id: string }>("/posts", body);
+      setTitle("");
       setContent("");
       setPulseOpts(["", ""]);
       router.replace(`/post/${post.id}`);
@@ -112,6 +120,18 @@ export default function CreatePost() {
           </View>
 
           <Text style={styles.label}>{`What's on your mind?`}</Text>
+          <View style={styles.titleRow}>
+            <TextInput
+              testID="post-title-input"
+              value={title}
+              onChangeText={(t) => setTitle(t.slice(0, TITLE_MAX))}
+              placeholder="Give it a short title..."
+              placeholderTextColor={colors.muted}
+              style={styles.titleInput}
+              maxLength={TITLE_MAX}
+            />
+            <Text style={styles.charCount} testID="title-char-count">{title.length}/{TITLE_MAX}</Text>
+          </View>
           <TextInput
             testID="post-content-input"
             value={content}
@@ -201,6 +221,26 @@ const styles = StyleSheet.create({
   },
   audChipActive: { backgroundColor: colors.brand },
   audText: { fontSize: font.base, color: colors.onSurfaceTertiary, fontWeight: "600" },
+  titleRow: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+  },
+  titleInput: {
+    fontSize: font.lg,
+    fontWeight: "700",
+    color: colors.onSurface,
+    paddingVertical: spacing.sm,
+  },
+  charCount: {
+    alignSelf: "flex-end",
+    fontSize: 11,
+    color: colors.muted,
+    paddingBottom: 4,
+  },
   textarea: {
     minHeight: 140,
     backgroundColor: colors.surfaceSecondary,

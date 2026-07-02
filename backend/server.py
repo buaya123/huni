@@ -140,6 +140,7 @@ class AuthOut(BaseModel):
 
 
 class PostCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
     content: str = Field(min_length=1, max_length=2000)
     mood: str = Field(pattern="^(need_advice|confession|rant|question|local_update|hot_take|buy_sell|safety|pulse)$")
     audience: str = Field(default="public", pattern="^(public|nearby)$")
@@ -152,6 +153,10 @@ class CommentCreate(BaseModel):
 
 class ReactionIn(BaseModel):
     kind: str = Field(pattern="^(heart|helpful|hug|laugh)$")
+
+
+class CommentReactionIn(BaseModel):
+    kind: str = Field(pattern="^(up|down)$")
 
 
 class PulseVoteIn(BaseModel):
@@ -306,6 +311,7 @@ async def _hydrate_post(p: Dict[str, Any], viewer_id: Optional[str]) -> Dict[str
     return {
         "id": p["id"],
         "author": public_user(author) if author else {"id": p["author_id"], "alias": "Unknown"},
+        "title": p.get("title", ""),
         "content": p["content"],
         "mood": p["mood"],
         "audience": p.get("audience", "public"),
@@ -326,6 +332,7 @@ async def create_post(inp: PostCreate, user: Dict[str, Any] = Depends(get_curren
     doc: Dict[str, Any] = {
         "id": new_id(),
         "author_id": user["id"],
+        "title": inp.title.strip(),
         "content": inp.content.strip(),
         "mood": inp.mood,
         "audience": inp.audience,
@@ -467,12 +474,17 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
     out = []
     for c in rows:
         author = await db.users.find_one({"id": c["author_id"]}, {"_id": 0, "password": 0})
+        reactions = c.get("reactions", {}) or {}
+        reactors = c.get("reactors", {}) or {}
         out.append({
             "id": c["id"],
             "post_id": c["post_id"],
             "author": public_user(author) if author else {"id": c["author_id"], "alias": "Unknown"},
             "content": c["content"],
             "created_at": c["created_at"],
+            "up": reactions.get("up", 0),
+            "down": reactions.get("down", 0),
+            "my_reaction": reactors.get(user["id"]),
         })
     return out
 
@@ -513,6 +525,52 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         "author": public_user(user),
         "content": doc["content"],
         "created_at": doc["created_at"],
+        "up": 0,
+        "down": 0,
+        "my_reaction": None,
+    }
+
+
+@api.post("/comments/{comment_id}/react")
+async def react_comment(comment_id: str, inp: CommentReactionIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    c = await db.comments.find_one({"id": comment_id})
+    if not c or c.get("status") != "active":
+        raise HTTPException(status_code=404, detail="Comment not found")
+    reactions = c.get("reactions", {}) or {}
+    reactors = c.get("reactors", {}) or {}
+    prev = reactors.get(user["id"])
+    if prev == inp.kind:
+        reactions[prev] = max(0, reactions.get(prev, 1) - 1)
+        reactors.pop(user["id"], None)
+        new_kind: Optional[str] = None
+    else:
+        if prev:
+            reactions[prev] = max(0, reactions.get(prev, 1) - 1)
+        reactions[inp.kind] = reactions.get(inp.kind, 0) + 1
+        reactors[user["id"]] = inp.kind
+        new_kind = inp.kind
+    await db.comments.update_one({"id": comment_id}, {"$set": {"reactions": reactions, "reactors": reactors}})
+
+    # helpful score: +1 when someone gives you an "up", -1 when they take it away or switch to down
+    if c["author_id"] != user["id"]:
+        delta = 0
+        if prev != "up" and new_kind == "up":
+            delta = 1
+        elif prev == "up" and new_kind != "up":
+            delta = -1
+        if delta:
+            await db.users.update_one({"id": c["author_id"]}, {"$inc": {"helpful_score": delta}})
+
+    author = await db.users.find_one({"id": c["author_id"]}, {"_id": 0, "password": 0})
+    return {
+        "id": c["id"],
+        "post_id": c["post_id"],
+        "author": public_user(author) if author else {"id": c["author_id"], "alias": "Unknown"},
+        "content": c["content"],
+        "created_at": c["created_at"],
+        "up": reactions.get("up", 0),
+        "down": reactions.get("down", 0),
+        "my_reaction": reactors.get(user["id"]),
     }
 
 
@@ -812,16 +870,16 @@ async def seed_data() -> Dict[str, Any]:
         created_users.append(u["id"])
 
     sample = [
-        ("Naa bay nice nga coffee shop diri sa Buug? Craving na kaayo ko.", "question", "nearby"),
-        ("Confession: nag-drop ko sa akong online class kay ganahan na jud ko mag rest. Ok ra ba?", "confession", "public"),
-        ("Rant: brownout again for the 3rd time this week. Kapoy na jud.", "rant", "nearby"),
-        ("Need advice: unsa mas nindot, save ug tag first job or invest? Fresh grad ko.", "need_advice", "public"),
-        ("Hot take: silent hobbies are underrated. Reading > scrolling.", "hot_take", "public"),
-        ("Local update: bag-ong tindahan sa may plaza — mura ilang ulam!", "local_update", "nearby"),
-        ("Safety concern: dark street near the terminal, walay street lights. Please be careful gabii.", "safety", "nearby"),
+        ("Coffee shop hunt in Buug", "Naa bay nice nga coffee shop diri sa Buug? Craving na kaayo ko.", "question", "nearby"),
+        ("Dropped my class today", "Confession: nag-drop ko sa akong online class kay ganahan na jud ko mag rest. Ok ra ba?", "confession", "public"),
+        ("Third brownout this week", "Rant: brownout again for the 3rd time this week. Kapoy na jud.", "rant", "nearby"),
+        ("Save first or invest first?", "Need advice: unsa mas nindot, save ug tag first job or invest? Fresh grad ko.", "need_advice", "public"),
+        ("Silent hobbies win", "Hot take: silent hobbies are underrated. Reading > scrolling.", "hot_take", "public"),
+        ("New tindahan near the plaza", "Local update: bag-ong tindahan sa may plaza — mura ilang ulam!", "local_update", "nearby"),
+        ("Watch out near the terminal", "Safety concern: dark street near the terminal, walay street lights. Please be careful gabii.", "safety", "nearby"),
     ]
     posts_created = 0
-    for content, mood, audience in sample:
+    for title, content, mood, audience in sample:
         exists = await db.posts.find_one({"content": content})
         if exists:
             continue
@@ -829,6 +887,7 @@ async def seed_data() -> Dict[str, Any]:
         p = {
             "id": new_id(),
             "author_id": author_id,
+            "title": title,
             "content": content,
             "mood": mood,
             "audience": audience,
@@ -843,12 +902,14 @@ async def seed_data() -> Dict[str, Any]:
         posts_created += 1
 
     # a pulse example
+    pulse_title = "Best internet provider?"
     pulse_content = "Best internet provider sa Buug karon?"
     if not await db.posts.find_one({"content": pulse_content}):
         author_id = random.choice(created_users)
         p = {
             "id": new_id(),
             "author_id": author_id,
+            "title": pulse_title,
             "content": pulse_content,
             "mood": "pulse",
             "audience": "nearby",

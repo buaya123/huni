@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/auth";
@@ -19,13 +19,13 @@ export default function Profile() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [commented, setCommented] = useState<CommentedPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [editingBio, setEditingBio] = useState(false);
   const [bio, setBio] = useState("");
   const [regenNote, setRegenNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
     try {
       const [ps, cps] = await Promise.all([
         api.get<Post[]>(`/users/${user.id}/posts`),
@@ -38,12 +38,22 @@ export default function Profile() {
       setCommented([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [user]);
 
-  useEffect(() => { load(); refresh(); }, [load, refresh]);
-  useFocusEffect(useCallback(() => { load(); refresh(); }, [load, refresh]));
+  useEffect(() => {
+    setLoading(true);
+    load();
+  }, [load]);
+
   useEffect(() => { if (user) setBio(user.bio ?? ""); }, [user]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    refresh();
+    load();
+  }, [refresh, load]);
 
   if (!user) return null;
 
@@ -68,7 +78,10 @@ export default function Profile() {
 
   return (
     <SafeAreaView style={styles.wrap} edges={["top"]}>
-      <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxxl }}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: spacing.xxxl }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
+      >
         <View style={styles.banner}>
           <Pressable
             style={styles.settingsBtn}
@@ -149,7 +162,7 @@ export default function Profile() {
           ) : (
             <View style={{ paddingHorizontal: spacing.lg }}>
               {posts.map((p) => (
-                <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} compact />
+                <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} />
               ))}
             </View>
           )

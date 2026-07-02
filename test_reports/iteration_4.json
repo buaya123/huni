@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 4 — full backend + frontend verification of the 6 feedback items. Backend: 34/34 pytest tests PASSED (20 regression from iter 2 + 14 new). New tests validate: post title required (missing/empty/>100 → 422; 100 ok), title present on create response and GET; seed posts include titles; GET comments returns up/down/my_reaction; POST /api/comments/{id}/react toggles up→off, up→down switch; helpful_score +1 on 'up' from OTHER user, -1 on toggle-off or up→down switch, author cannot bump own helpful_score; my_reaction is per-viewer; invalid kind 422. Frontend: (1) Home tagline 'Honest. Local. Things' present, old 'Whispers · Local · Kind' gone. (2) Feed shows 22 post-title-{id} and 22 react-summary-{id} testIDs, 0 tappable react-* buttons on feed; empty reactions show 'No reactions yet'. (3) Create screen has post-title-input (placeholder 'Give it a short title...') + title-char-count showing '0/100'; submitting with empty title displays 'Please add a title.' error. (4) Post detail (mode=detail) shows all 4 react buttons (heart/helpful/hug/laugh); tapping heart increments from '❤️' to '❤️ 1'. (5) Comment thumbs-up/down: tapping comment-up went 0→1; switching to comment-down set down=1 and up back to 0 (state toggles correctly on UI). (6) Profile no-auto-refresh: in-app tab round-trip (Profile→Home→Profile via tab links) produced 0 requests to /users/{id}/posts or /users/{id}/commented-posts — confirming absence of useFocusEffect; initial mount and pull-to-refresh remain the only triggers. Pre-existing RN Web deprecation warnings (shadow*/pointerEvents) still present, non-blocking.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "deprecated-style-props", "issue": "RN Web console warns: 'shadow*' style props are deprecated (use boxShadow); props.pointerEvents is deprecated (use style.pointerEvents). Non-blocking, pre-existing from earlier iterations."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_huni_api.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: migrate remaining shadow*/pointerEvents style props to boxShadow / style.pointerEvents to silence RN Web deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py PostCreate model correctly enforces title min_length=1, max_length=100; create_post persists title.strip() and _hydrate_post surfaces `title`.",
+    "server.py react_comment applies helpful_score delta only when c['author_id'] != user['id'] — author self-up is a no-op for helpful_score. Delta logic (prev/new): +1 when prev != 'up' and new == 'up'; -1 when prev == 'up' and new != 'up'. Correct per spec.",
+    "profile.tsx uses useEffect(load, [load]) on mount only; no useFocusEffect. RefreshControl.onRefresh calls refresh()+load(). Matches feedback item (1).",
+    "PostCard.tsx renders `title` bold via styles.title and content truncated to 120 chars with '....' when mode==='feed'; react summary top-3 with '…' chip when >3 kinds, 'No reactions yet' when total=0. Feed mode renders NO tappable react-* buttons (confirmed live: 22 react-summary vs 0 react-heart/helpful/hug/laugh in feed).",
+    "post/[id].tsx renders comment-up-{id} / comment-down-{id} testIDs and 4 react buttons on the post — all present live."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_huni_api.py (added title to POST /posts payloads to remain compatible with new required field)",
+    "/app/backend/tests/test_iteration4.py (new — 14 tests for title validation + comment reactions + helpful_score)"
+  ],
+  "success_rate": {"backend": "100% (34/34)", "frontend": "100% for the six feedback items verified live"},
+  "seed_data_creation": "POST /api/dev/seed called (idempotent). Also created several ephemeral TEST_ users via /api/auth/register during pytest run and one manual comment via UI on demo1 post; no cleanup required.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iteration4.py owns iteration 4 assertions; test_huni_api.py contains legacy regression (title now included in all post-creation payloads). If the PostCreate schema changes again (e.g., new required field), update both files. For frontend, tab-round-trip profile-no-refresh test uses in-app <a href> tab links (NOT page.goto — a full reload will re-mount the component and refetch as expected). Comment-up/down state is per-viewer so tests should use a second registered user when checking helpful_score changes."
+}

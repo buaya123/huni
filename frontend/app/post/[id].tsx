@@ -25,6 +25,9 @@ type Comment = {
   author: { id: string; alias: string };
   content: string;
   created_at: string;
+  up: number;
+  down: number;
+  my_reaction: "up" | "down" | null;
 };
 
 function timeAgo(iso: string) {
@@ -175,7 +178,7 @@ export default function PostDetail() {
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl }}
           ListHeaderComponent={
             <View>
-              <PostCard post={post} onChange={setPost} onPress={() => { /* stay */ }} />
+              <PostCard post={post} onChange={setPost} onPress={() => { /* stay */ }} mode="detail" />
               <Text style={styles.commentsTitle}>Comments ({comments.length})</Text>
             </View>
           }
@@ -189,6 +192,44 @@ export default function PostDetail() {
                   <Text style={styles.cTime}>{timeAgo(item.created_at)}</Text>
                 </View>
                 <Text style={styles.cBody}>{item.content}</Text>
+                <View style={styles.commentReactRow}>
+                  <Pressable
+                    onPress={async () => {
+                      try {
+                        const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "up" });
+                        setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                      } catch { /* ignore */ }
+                    }}
+                    style={[styles.voteBtn, item.my_reaction === "up" && styles.voteBtnUp]}
+                    testID={`comment-up-${item.id}`}
+                    hitSlop={6}
+                  >
+                    <Ionicons
+                      name={item.my_reaction === "up" ? "thumbs-up" : "thumbs-up-outline"}
+                      size={14}
+                      color={item.my_reaction === "up" ? colors.success : colors.muted}
+                    />
+                    <Text style={[styles.voteCount, item.my_reaction === "up" && { color: colors.success }]}>{item.up}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={async () => {
+                      try {
+                        const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "down" });
+                        setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                      } catch { /* ignore */ }
+                    }}
+                    style={[styles.voteBtn, item.my_reaction === "down" && styles.voteBtnDown]}
+                    testID={`comment-down-${item.id}`}
+                    hitSlop={6}
+                  >
+                    <Ionicons
+                      name={item.my_reaction === "down" ? "thumbs-down" : "thumbs-down-outline"}
+                      size={14}
+                      color={item.my_reaction === "down" ? colors.error : colors.muted}
+                    />
+                    <Text style={[styles.voteCount, item.my_reaction === "down" && { color: colors.error }]}>{item.down}</Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
           )}
@@ -233,6 +274,19 @@ const styles = StyleSheet.create({
   cAlias: { fontWeight: "700", color: colors.onSurface },
   cTime: { fontSize: font.sm, color: colors.muted },
   cBody: { fontSize: font.base, color: colors.onSurface, marginTop: 2, lineHeight: 20 },
+  commentReactRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  voteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceTertiary,
+  },
+  voteBtnUp: { backgroundColor: "#DFF1DF" },
+  voteBtnDown: { backgroundColor: "#F8D7D7" },
+  voteCount: { fontSize: font.sm, color: colors.muted, fontWeight: "600" },
   inputBar: {
     flexDirection: "row", alignItems: "flex-end", gap: spacing.sm,
     padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,

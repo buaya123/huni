@@ -61,7 +61,7 @@ export default function Home() {
     <SafeAreaView style={styles.wrap} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.brand}>Huni</Text>
-        <Text style={styles.tagline}>Whispers · Local · Kind</Text>
+        <Text style={styles.tagline}>Honest. Local. Things</Text>
       </View>
 
       <View style={styles.tabsWrap}>

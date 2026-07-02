@@ -756,6 +756,7 @@ async def react_comment(comment_id: str, inp: CommentReactionIn, user: Dict[str,
         "up": reactions.get("up", 0),
         "down": reactions.get("down", 0),
         "my_reaction": reactors.get(user["id"]),
+        "parent_comment_id": c.get("parent_comment_id"),
     }
 
 

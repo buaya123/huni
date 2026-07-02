@@ -316,7 +316,7 @@ export default function PostDetail() {
                           onPress={async () => {
                             try {
                               const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "up" });
-                              setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                              setComments((prev) => prev.map((x) => (x.id === updated.id ? { ...x, up: updated.up, down: updated.down, my_reaction: updated.my_reaction } : x)));
                             } catch { /* ignore */ }
                           }}
                           style={[styles.voteBtn, item.my_reaction === "up" && styles.voteBtnUp]}
@@ -334,7 +334,7 @@ export default function PostDetail() {
                           onPress={async () => {
                             try {
                               const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind: "down" });
-                              setComments((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                              setComments((prev) => prev.map((x) => (x.id === updated.id ? { ...x, up: updated.up, down: updated.down, my_reaction: updated.my_reaction } : x)));
                             } catch { /* ignore */ }
                           }}
                           style={[styles.voteBtn, item.my_reaction === "down" && styles.voteBtnDown]}

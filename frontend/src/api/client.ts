@@ -57,6 +57,10 @@ export const api = {
   del: <T>(p: string) => request<T>(p, { method: "DELETE" }),
 };
 
+export function imageUrl(id: string): string {
+  return `${API_BASE}/images/${id}`;
+}
+
 // Websocket URL helper (converts https/http to wss/ws)
 export function wsUrl(token: string): string {
   const url = BASE_URL.replace(/^http/, "ws");

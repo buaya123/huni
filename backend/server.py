@@ -7,6 +7,7 @@ WebSockets for realtime chat + notifications.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import random
@@ -30,6 +31,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -187,11 +189,18 @@ class PostCreate(BaseModel):
     mood: str = Field(pattern="^(need_advice|confession|rant|question|local_update|hot_take|buy_sell|safety|pulse)$")
     audience: str = Field(default="public", pattern="^(public|nearby)$")
     pulse_options: Optional[List[str]] = None  # for pulse-type posts
+    image_ids: Optional[List[str]] = None  # max 4
 
 
 class CommentCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=1000)
+    content: str = Field(default="", max_length=1000)
     parent_comment_id: Optional[str] = None
+    image_ids: Optional[List[str]] = None  # max 4
+
+
+class UploadIn(BaseModel):
+    data: str  # base64-encoded image (raw or data URI)
+    content_type: str = Field(default="image/jpeg", pattern="^image/(jpeg|png|webp|gif)$")
 
 
 class ReactionIn(BaseModel):
@@ -469,6 +478,7 @@ async def _hydrate_post(p: Dict[str, Any], viewer_id: Optional[str]) -> Dict[str
         "pulse_options": p.get("pulse_options"),
         "pulse_votes": p.get("pulse_votes"),
         "my_pulse_vote": (p.get("pulse_voters", {}) or {}).get(viewer_id) if viewer_id else None,
+        "images": p.get("image_ids", []) or [],
         "status": p.get("status", "active"),
     }
 
@@ -487,6 +497,7 @@ async def create_post(inp: PostCreate, user: Dict[str, Any] = Depends(get_curren
         "reactors": {},    # user_id -> kind
         "comment_count": 0,
         "status": "active",
+        "image_ids": (inp.image_ids or [])[:4],
     }
     if inp.mood == "pulse" and inp.pulse_options:
         doc["pulse_options"] = inp.pulse_options[:4]
@@ -613,6 +624,48 @@ async def pulse_vote(post_id: str, inp: PulseVoteIn, user: Dict[str, Any] = Depe
     return await _hydrate_post(p, user["id"])
 
 
+# ---------- routes: image uploads ----------
+MAX_IMAGE_B64_LEN = 8 * 1024 * 1024  # ~6MB binary
+
+
+@api.post("/uploads")
+async def upload_image(inp: UploadIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+    data = inp.data
+    if "," in data and data.strip().startswith("data:"):
+        data = data.split(",", 1)[1]
+    if len(data) > MAX_IMAGE_B64_LEN:
+        raise HTTPException(status_code=413, detail="Image too large")
+    try:
+        base64.b64decode(data[:100])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+    image_id = new_id()
+    await db.images.insert_one({
+        "id": image_id,
+        "owner_id": user["id"],
+        "data": data,
+        "content_type": inp.content_type,
+        "created_at": now().isoformat(),
+    })
+    return {"id": image_id}
+
+
+@api.get("/images/{image_id}")
+async def get_image(image_id: str) -> Response:
+    img = await db.images.find_one({"id": image_id})
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    try:
+        content = base64.b64decode(img["data"])
+    except Exception:
+        raise HTTPException(status_code=500, detail="Corrupt image")
+    return Response(
+        content=content,
+        media_type=img.get("content_type", "image/jpeg"),
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 # ---------- routes: comments ----------
 @api.get("/posts/{post_id}/comments")
 async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
@@ -633,6 +686,7 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
             "my_reaction": reactors.get(user["id"]),
             "parent_comment_id": c.get("parent_comment_id"),
             "reply_to_alias": None,
+            "images": c.get("image_ids", []) or [],
         }
         if entry["parent_comment_id"]:
             parent = await db.comments.find_one({"id": entry["parent_comment_id"]}, {"author_id": 1})
@@ -649,6 +703,8 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
     p = await db.posts.find_one({"id": post_id})
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
+    if not inp.content.strip() and not (inp.image_ids or []):
+        raise HTTPException(status_code=422, detail="Comment needs text or an image")
 
     # validate parent comment (if replying) — must belong to the same post
     parent_author_id: Optional[str] = None
@@ -669,6 +725,7 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         "created_at": now().isoformat(),
         "status": "active",
         "parent_comment_id": inp.parent_comment_id,
+        "image_ids": (inp.image_ids or [])[:4],
     }
     await db.comments.insert_one(doc)
     await db.posts.update_one({"id": post_id}, {"$inc": {"comment_count": 1}})
@@ -682,7 +739,7 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
             "type": "comment",
             "actor_alias": user["alias"],
             "post_id": post_id,
-            "content_preview": inp.content[:80],
+            "content_preview": inp.content[:80] or "📷 Photo",
             "created_at": now().isoformat(),
             "read": False,
         })
@@ -696,7 +753,7 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
             "type": "reply",
             "actor_alias": user["alias"],
             "post_id": post_id,
-            "content_preview": inp.content[:80],
+            "content_preview": inp.content[:80] or "📷 Photo",
             "created_at": now().isoformat(),
             "read": False,
         })
@@ -713,6 +770,7 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         "my_reaction": None,
         "parent_comment_id": inp.parent_comment_id,
         "reply_to_alias": parent_author_alias,
+        "images": doc["image_ids"],
     }
 
 
@@ -1146,6 +1204,7 @@ async def on_startup() -> None:
     await db.posts.create_index("author_id")
     await db.comments.create_index("post_id")
     await db.comments.create_index([("created_at", 1)])
+    await db.images.create_index("id")
     await db.notifications.create_index("user_id")
     await db.conversations.create_index("participants")
     await db.messages.create_index("conversation_id")

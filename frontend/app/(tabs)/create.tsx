@@ -13,8 +13,12 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { api } from "@/src/api/client";
+import { pickImages, uploadImages, type PickedImage } from "@/src/utils/imagePicker";
 import { colors, font, MOODS, radius, spacing } from "@/src/theme/tokens";
+
+const MAX_IMAGES = 4;
 
 export default function CreatePost() {
   const router = useRouter();
@@ -23,6 +27,8 @@ export default function CreatePost() {
   const [mood, setMood] = useState<string>("question");
   const [audience, setAudience] = useState<"public" | "nearby">("public");
   const [pulseOpts, setPulseOpts] = useState<string[]>(["", ""]);
+  const [images, setImages] = useState<PickedImage[]>([]);
+  const [picking, setPicking] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,10 +62,14 @@ export default function CreatePost() {
         }
         body.pulse_options = opts;
       }
+      if (images.length > 0) {
+        body.image_ids = await uploadImages(images);
+      }
       const post = await api.post<{ id: string }>("/posts", body);
       setTitle("");
       setContent("");
       setPulseOpts(["", ""]);
+      setImages([]);
       router.replace(`/post/${post.id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to post");
@@ -70,6 +80,17 @@ export default function CreatePost() {
 
   const setPulseOpt = (idx: number, val: string) => {
     setPulseOpts((prev) => prev.map((p, i) => (i === idx ? val : p)));
+  };
+
+  const addImages = async () => {
+    if (picking) return;
+    setPicking(true);
+    try {
+      const picked = await pickImages(MAX_IMAGES - images.length);
+      if (picked.length) setImages((prev) => [...prev, ...picked].slice(0, MAX_IMAGES));
+    } finally {
+      setPicking(false);
+    }
   };
 
   return (
@@ -142,6 +163,35 @@ export default function CreatePost() {
             style={styles.textarea}
           />
 
+          <Text style={styles.label}>Photos ({images.length}/{MAX_IMAGES})</Text>
+          <View style={styles.imageRow}>
+            {images.map((img, idx) => (
+              <View key={`${img.uri}-${idx}`} style={styles.imageThumbWrap} testID={`picked-image-${idx}`}>
+                <Image source={{ uri: img.uri }} style={styles.imageThumb} contentFit="cover" />
+                <Pressable
+                  style={styles.imageRemove}
+                  onPress={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
+                  hitSlop={8}
+                  testID={`remove-image-${idx}`}
+                >
+                  <Ionicons name="close" size={14} color="#FFF" />
+                </Pressable>
+              </View>
+            ))}
+            {images.length < MAX_IMAGES && (
+              <Pressable style={styles.addImageTile} onPress={addImages} testID="add-images-btn">
+                {picking ? (
+                  <ActivityIndicator color={colors.brand} size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="image-outline" size={22} color={colors.brand} />
+                    <Text style={styles.addImageText}>Add</Text>
+                  </>
+                )}
+              </Pressable>
+            )}
+          </View>
+
           {isPulse && (
             <View>
               <Text style={styles.label}>Pulse options (2-4)</Text>
@@ -180,7 +230,14 @@ export default function CreatePost() {
             disabled={loading}
             style={[styles.btn, loading && { opacity: 0.6 }]}
           >
-            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.btnText}>Post anonymously</Text>}
+            {loading ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <ActivityIndicator color="#FFF" />
+                {images.length > 0 && <Text style={styles.btnText}>Uploading...</Text>}
+              </View>
+            ) : (
+              <Text style={styles.btnText}>Post anonymously</Text>
+            )}
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -264,6 +321,32 @@ const styles = StyleSheet.create({
   },
   addOptBtn: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", padding: spacing.sm },
   addOptText: { color: colors.brand, fontWeight: "600" },
+  imageRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  imageThumbWrap: { position: "relative" },
+  imageThumb: { width: 76, height: 76, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  imageRemove: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addImageTile: {
+    width: 76,
+    height: 76,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: colors.brand,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+  },
+  addImageText: { fontSize: 11, color: colors.brand, fontWeight: "700" },
   notice: {
     flexDirection: "row",
     gap: spacing.sm,

@@ -16,6 +16,10 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { Avatar } from "@/src/components/Avatar";
 import { PostCard, type Post } from "@/src/components/PostCard";
+import { ImageViewer } from "@/src/components/PostImages";
+import { imageUrl } from "@/src/api/client";
+import { pickImages, uploadImages, type PickedImage } from "@/src/utils/imagePicker";
+import { Image } from "expo-image";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
 type Comment = {
@@ -29,6 +33,7 @@ type Comment = {
   my_reaction: "up" | "down" | null;
   parent_comment_id?: string | null;
   reply_to_alias?: string | null;
+  images?: string[];
 };
 
 function timeAgo(iso: string) {
@@ -108,6 +113,9 @@ export default function PostDetail() {
   const [showActions, setShowActions] = useState(false);
   const [replyTo, setReplyTo] = useState<Comment | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [pendingImages, setPendingImages] = useState<PickedImage[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [viewer, setViewer] = useState<{ images: string[]; index: number } | null>(null);
   const inputRef = React.useRef<TextInput>(null);
 
   const threadRows = React.useMemo(
@@ -142,20 +150,33 @@ export default function PostDetail() {
   useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
-    if (!text.trim() || sending) return;
+    if ((!text.trim() && pendingImages.length === 0) || sending) return;
     setSending(true);
     try {
       const body: Record<string, unknown> = { content: text.trim() };
       if (replyTo) body.parent_comment_id = replyTo.id;
+      if (pendingImages.length > 0) body.image_ids = await uploadImages(pendingImages);
       const c = await api.post<Comment>(`/posts/${id}/comments`, body);
       setComments((prev) => [...prev, c]);
       setText("");
       setReplyTo(null);
+      setPendingImages([]);
       if (post) setPost({ ...post, comment_count: (post.comment_count || 0) + 1 });
     } catch {
       // ignore
     } finally {
       setSending(false);
+    }
+  };
+
+  const addCommentImages = async () => {
+    if (picking) return;
+    setPicking(true);
+    try {
+      const picked = await pickImages(4 - pendingImages.length);
+      if (picked.length) setPendingImages((prev) => [...prev, ...picked].slice(0, 4));
+    } finally {
+      setPicking(false);
     }
   };
 
@@ -301,7 +322,9 @@ export default function PostDetail() {
                     )}
                   </Pressable>
                   {row.collapsed ? (
-                    <Text style={styles.cBodyCollapsed} numberOfLines={1}>{item.content}</Text>
+                    <Text style={styles.cBodyCollapsed} numberOfLines={1}>
+                      {item.content || (item.images?.length ? "📷 Photo" : "")}
+                    </Text>
                   ) : (
                     <>
                       {!!item.reply_to_alias && row.actualDepth > MAX_DEPTH && (
@@ -310,7 +333,20 @@ export default function PostDetail() {
                           <Text style={styles.replyChipText}>replying to {item.reply_to_alias}</Text>
                         </View>
                       )}
-                      <Text style={styles.cBody}>{item.content}</Text>
+                      {!!item.content && <Text style={styles.cBody}>{item.content}</Text>}
+                      {!!item.images?.length && (
+                        <View style={styles.cImageRow} testID={`comment-images-${item.id}`}>
+                          {item.images.map((imgId, i) => (
+                            <Pressable
+                              key={imgId}
+                              onPress={() => setViewer({ images: item.images!, index: i })}
+                              testID={`comment-image-${item.id}-${i}`}
+                            >
+                              <Image source={{ uri: imageUrl(imgId) }} style={styles.cImage} contentFit="cover" transition={100} />
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
                       <View style={styles.commentReactRow}>
                         <Pressable
                           onPress={async () => {
@@ -376,7 +412,37 @@ export default function PostDetail() {
               </Pressable>
             </View>
           )}
+          {pendingImages.length > 0 && (
+            <View style={styles.pendingRow} testID="pending-images">
+              {pendingImages.map((img, idx) => (
+                <View key={`${img.uri}-${idx}`} style={styles.pendingThumbWrap}>
+                  <Image source={{ uri: img.uri }} style={styles.pendingThumb} contentFit="cover" />
+                  <Pressable
+                    style={styles.pendingRemove}
+                    onPress={() => setPendingImages((prev) => prev.filter((_, i) => i !== idx))}
+                    hitSlop={8}
+                    testID={`remove-pending-image-${idx}`}
+                  >
+                    <Ionicons name="close" size={12} color="#FFF" />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          )}
           <View style={styles.inputRow}>
+            <Pressable
+              onPress={addCommentImages}
+              disabled={picking || pendingImages.length >= 4}
+              style={styles.imageBtn}
+              testID="comment-image-btn"
+              hitSlop={6}
+            >
+              {picking ? (
+                <ActivityIndicator size="small" color={colors.brand} />
+              ) : (
+                <Ionicons name="image-outline" size={22} color={pendingImages.length >= 4 ? colors.muted : colors.brand} />
+              )}
+            </Pressable>
             <TextInput
               testID="comment-input"
               ref={inputRef}
@@ -387,12 +453,29 @@ export default function PostDetail() {
               style={styles.input}
               multiline
             />
-            <Pressable onPress={submit} disabled={!text.trim() || sending} style={styles.sendBtn} testID="send-comment-btn">
-              <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
+            <Pressable
+              onPress={submit}
+              disabled={(!text.trim() && pendingImages.length === 0) || sending}
+              style={styles.sendBtn}
+              testID="send-comment-btn"
+            >
+              {sending ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Ionicons name="send" size={18} color={text.trim() || pendingImages.length > 0 ? "#FFF" : colors.muted} />
+              )}
             </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>
+      {viewer && (
+        <ImageViewer
+          visible
+          images={viewer.images}
+          initialIndex={viewer.index}
+          onClose={() => setViewer(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -435,6 +518,8 @@ const styles = StyleSheet.create({
   cTime: { fontSize: font.sm, color: colors.muted },
   cBody: { fontSize: font.base, color: colors.onSurface, marginTop: 2, lineHeight: 20 },
   cBodyCollapsed: { fontSize: font.sm, color: colors.muted, marginTop: 2 },
+  cImageRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
+  cImage: { width: 120, height: 120, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   collapsedPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -511,6 +596,19 @@ const styles = StyleSheet.create({
   },
   sendBtn: {
     width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  imageBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: "center", justifyContent: "center",
+  },
+  pendingRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  pendingThumbWrap: { position: "relative" },
+  pendingThumb: { width: 56, height: 56, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
+  pendingRemove: {
+    position: "absolute", top: -5, right: -5,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: "rgba(0,0,0,0.7)",
     alignItems: "center", justifyContent: "center",
   },
 });

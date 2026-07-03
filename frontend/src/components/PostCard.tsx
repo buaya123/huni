@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, font, radius, REACTIONS, shadow, spacing } from "@/src/theme/tokens";
 import { Avatar } from "./Avatar";
 import { MoodChip } from "./MoodChip";
+import { PostImages } from "./PostImages";
 import { api } from "@/src/api/client";
 
 export type PostAuthor = {
@@ -28,6 +29,7 @@ export type Post = {
   pulse_options?: string[] | null;
   pulse_votes?: number[] | null;
   my_pulse_vote?: number | null;
+  images?: string[];
 };
 
 function timeAgo(iso: string): string {
@@ -106,6 +108,8 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
         </Text>
       )}
       <Text style={styles.content} numberOfLines={isFeed ? 3 : undefined}>{displayContent}</Text>
+
+      {!!post.images?.length && <PostImages images={post.images} height={isFeed ? 220 : 300} />}
 
       {post.mood === "pulse" && post.pulse_options && (
         <View style={styles.pulseWrap}>

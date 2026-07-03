@@ -101,3 +101,10 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+## Iteration 7 — Image uploads on posts & comments (June 2026)
+- New backend: POST /api/uploads (auth, base64 JSON body {data, content_type}) -> {id}; GET /api/images/{id} serves binary image (no auth, cache headers). db.images collection.
+- PostCreate + CommentCreate accept image_ids (max 4). Hydrated posts/comments return "images": [ids]. Comments can be image-only (content optional; 422 if both empty).
+- Frontend: src/utils/imagePicker.ts (expo-image-picker gallery-only + expo-image-manipulator resize 1080/jpeg 0.7 + sequential upload); src/components/PostImages.tsx (Reddit-style paging carousel w/ 1/N counter + dots + fullscreen ImageViewer modal).
+- create.tsx: "Photos (n/4)" picker grid with remove; post/[id].tsx: image button in comment input, pending thumbnails, comment image thumbnails (tap -> fullscreen viewer).
+- Backend flows already verified via python script: upload, serve, post w/ 3 images, image-only comment, text+2-images comment, empty comment 422, feed includes images.
+- Prior iteration: Reddit-style threaded comments (max 3 indent levels, collapsible, score-sorted) — already user-verified except vote-bug fix.

@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 7 - image uploads on posts & comments. Backend: 77/77 pytest PASSED (58 iter1-6 regression + 19 new iter7). New iter7 covers: (a) POST /api/uploads happy path (auth required, base64 raw + data-URI both accepted, returns {id}), 413 on >8MB base64, 422 on missing 'data' or bad content_type. (b) GET /api/images/{id} serves image/jpeg bytes with NO auth, 404 for unknown id. (c) POST /api/posts with image_ids returns/GETs 'images' array; 5-image input truncated to 4; feed rows all expose 'images: []' key. (d) POST /api/posts/{id}/comments: text+images, image-only (empty content) both allowed; empty content+empty image_ids -> 422; 5 images truncated to 4; GET /comments returns 'images' per row. (e) Regression: react_comment response still contains parent_comment_id; threaded reply with image_ids preserves parent_comment_id + reply_to_alias + images. Frontend (mobile 390x844) verified live on the target post 5a974335-cc07-49c6-b4f8-bb276f7db88d: 'post-images' carousel renders with '1/3' counter badge + page dots; tapping post-image-0 opens the fullscreen viewer; tapping 'image-viewer-close' closes it; two 'comment-images-*' blocks render and tapping a comment thumbnail opens the same viewer; 'comment-image-btn' + 'add-images-btn' + 'Photos (0/4)' label all present. Threading regression on a freshly-seeded TEST_i7 thread post: reply rail renders (data-testid comment-rail-*), upvoted nested reply keeps count=1 and stays nested; tapping the parent's 'comment-head-*' collapses the subtree and shows 'comment-collapsed-pill-*' text = '1 reply'; tapping again re-expands and reply becomes visible again.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/uploads", "issue": "Base64 validation is essentially unreachable. server.py:639 uses base64.b64decode(data[:100]) with default validate=False, which silently discards non-alphabet chars. Even '!!!!!' * 30 payloads return 200 with a stored garbage image. The 400 'Invalid image data' branch cannot be triggered by any reasonable client input. Consider validate=True and/or a Pillow open() sanity check."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "deprecated-style-props", "issue": "RN Web console still warns: 'shadow*' style props deprecated (use boxShadow). Non-blocking, carried over from prior iterations."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_huni_api.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_iteration5_google_auth.py",
+    "/app/backend/tests/test_iteration6_v1.py",
+    "/app/backend/tests/test_iteration7_images.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (minor): tighten POST /api/uploads validation. Current base64.b64decode(data[:100]) with default validate=False accepts almost anything (verified with '!!!!!'*30 payload returning 200). Recommend: base64.b64decode(data, validate=True) on the full string (or at least first 200 bytes) and/or a Pillow Image.open() sanity check on the decoded bytes. Would let the documented 400 'Invalid image data' response become reachable.",
+    "OPTIONAL: expo-image-picker/image-manipulator on the web preview did not populate 'picked-image-0' / 'pending-images' when Playwright programmatically fed a small 412-byte JPEG through the file chooser. The file chooser event DID resolve correctly with the file attached; the manipulator step likely rejects tiny/malformed images silently. Manual verification with a real photo works per E1's screenshots. No code fix required; noting for the next testing agent."
+  ],
+  "critical_code_review_comments": [
+    "server.py POST /api/uploads (line 631-650): 8MB size cap and content_type regex validation both work correctly. However base64 sanity-check uses default validate=False and only samples first 100 chars, so the 400 branch is nearly unreachable. Minor security/robustness issue - garbage payloads become stored 'images' whose subsequent GET returns whatever bytes base64.b64decode() ignored-non-b64-then-decoded emits.",
+    "server.py POST /api/posts (line 500) & POST /api/posts/{id}/comments (line 728): both correctly truncate image_ids to :4. _hydrate_post (line 481) and list_comments (line 689) correctly emit 'images' as an array (defaulting to []).",
+    "server.py POST /api/posts/{id}/comments (line 706): correctly rejects (422) when BOTH content is empty AND image_ids is empty/missing. Image-only comments pass. Notification 'content_preview' falls back to '\u{1F4F7} Photo' when the comment has no text - good UX.",
+    "server.py GET /api/images/{id}: no auth check by design (image serving from base64 storage). Uses Cache-Control public max-age=31536000 immutable which is correct for uuid-keyed immutable resources.",
+    "PostImages.tsx: paging carousel width derived via onLayout is a correct pattern; counter badge + dots hidden when images.length === 1; ImageViewer is embedded inside PostImages AND also re-exported for consumption by post/[id].tsx for comment-image viewing. Same 'image-viewer-close' testID lives on both instances - selectors still resolve because only one Modal is visible at a time.",
+    "post/[id].tsx submit() correctly uploads pendingImages first (uploadImages) then posts the comment body with image_ids. Handles image-only case: send button enabled when pendingImages.length > 0 even if text is blank. Send button shows a filled paper-plane when either text OR images present.",
+    "create.tsx submit() uploads images to /api/uploads sequentially before POST /api/posts. Uses router.replace(`/post/${post.id}`) after success so the user lands directly on the new post with the carousel. 'Photos (N/4)' label + add-images-btn hidden when 4 images picked. Nice.",
+    "imagePicker.ts: ensureGalleryPermission() short-circuits on web (Platform.OS === 'web' returns true immediately) which is correct - web uses browser file input. Manipulator resizes to 1080px width when source is wider, jpeg quality 0.7, base64:true. Good compression pipeline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7_images.py (NEW - 19 tests covering uploads, image serving, posts-with-images, comments-with-images, and regression)"
+  ],
+  "success_rate": {"backend": "100% (77/77 including 19 new iter7)", "frontend": "100% for observable UI checks: carousel + counter + dots + fullscreen viewer + close + comment-image thumbnails + comment-image-btn + add-images-btn + Photos (0/4) label + rails + collapse pill + nested-reply upvote"},
+  "seed_data_creation": "Iter7 pytest creates ~10 uploaded images + 5-6 posts (all TEST_i7 prefixed) and a couple of parent/reply comments across demo1/demo2 accounts. Also 1 dedicated thread-UI post (id f66b5516-a6ff-46ea-b229-6da3042bf4b8) with a threaded reply used to verify collapse behaviour. All fits within the pre-existing demo-user seed and can be pruned by inspecting content LIKE 'TEST_i7%'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Image-picker behaviour on the web preview via Playwright: the file chooser event resolves cleanly with await page.expect_file_chooser + fc.set_files(path), but the downstream expo-image-manipulator step needs a *real* JPEG with valid dimensions (>=100x100 recommended) - a tiny 412-byte crafted JPEG causes manipulator to reject silently and no 'picked-image-0' / 'pending-images' node ever renders. If you need to E2E the picker in the future, either (a) use a real photo file bundled in /app/frontend/assets, or (b) monkey-patch pickImages via a test-mode env flag so it returns a fixed base64 without going through manipulator. All observable UI (carousel, viewer, comment thumbs, buttons, labels, threading collapse) verified working with real seed data. Backend upload 400-invalid branch is currently unreachable - not a bug per problem-statement wording but flagged as a minor code review item.",
+  "rca_of_issue": "N/A - no functional bugs found. One minor code review item: POST /api/uploads validation lets garbage payloads through (server.py:639)."
+}

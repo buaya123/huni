@@ -636,7 +636,7 @@ async def upload_image(inp: UploadIn, user: Dict[str, Any] = Depends(get_current
     if len(data) > MAX_IMAGE_B64_LEN:
         raise HTTPException(status_code=413, detail="Image too large")
     try:
-        base64.b64decode(data[:100])
+        base64.b64decode(data[:100], validate=True)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image data")
     image_id = new_id()

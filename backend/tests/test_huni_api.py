@@ -84,7 +84,10 @@ class TestPostsFeed:
         assert r.status_code == 200
         posts = r.json()
         assert isinstance(posts, list) and len(posts) > 0
-        assert "id" in posts[0] and "author" in posts[0] and "mood" in posts[0]
+        # iter8: feed can be interleaved with ads (type='ad'); assert only on real posts
+        real = [p for p in posts if p.get("type") != "ad"]
+        assert real, "expected at least one non-ad post"
+        assert "id" in real[0] and "author" in real[0] and "mood" in real[0]
 
     def test_trending(self):
         token, _, _ = _register()
@@ -96,6 +99,8 @@ class TestPostsFeed:
         r = requests.get(f"{API}/posts?tab=nearby", headers=_headers(token))
         assert r.status_code == 200
         for p in r.json():
+            if p.get("type") == "ad":
+                continue  # iter8: ads may be injected — skip
             assert p["audience"] == "nearby"
 
     def test_pulse(self):
@@ -103,6 +108,8 @@ class TestPostsFeed:
         r = requests.get(f"{API}/posts?tab=pulse", headers=_headers(token))
         assert r.status_code == 200
         for p in r.json():
+            # iter8: pulse tab must have no ads
+            assert p.get("type") != "ad", "pulse tab should not inject ads"
             assert p["mood"] == "pulse"
 
 

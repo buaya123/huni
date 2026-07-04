@@ -108,3 +108,12 @@
 - create.tsx: "Photos (n/4)" picker grid with remove; post/[id].tsx: image button in comment input, pending thumbnails, comment image thumbnails (tap -> fullscreen viewer).
 - Backend flows already verified via python script: upload, serve, post w/ 3 images, image-only comment, text+2-images comment, empty comment 422, feed includes images.
 - Prior iteration: Reddit-style threaded comments (max 3 indent levels, collapsible, score-sorted) — already user-verified except vote-bug fix.
+
+## Iteration 8 — Ads system with roles (June 2026)
+- Roles: users.role (user|advertiser|admin). ADMIN_EMAILS env (demo1@huni.app is admin). Admin promotes via POST /api/admin/users/{id}/role.
+- Ads: POST /api/ads (advertiser/admin), GET /api/ads/mine (with stats), GET/PATCH/DELETE /api/ads/{id}, GET /api/ads/{id}/analytics (totals+14d daily+recent clicks), POST /api/ads/{id}/impression, POST /api/ads/{id}/click.
+- Admin: GET /api/admin/users?q=, POST /api/admin/users/{id}/role, GET /api/admin/ads, GET/PATCH /api/admin/settings (ad_every_n_posts, default 5).
+- Feed injection: GET /api/posts interleaves weighted-random ads (type:"ad") every N posts (except pulse tab); small feeds get 1 ad after 2nd post.
+- Ad comments reuse /api/posts/{ad_id}/comments; comments_enabled=false -> 403; ad owner/admin can DELETE any comment on their ad.
+- Frontend: AdCard (sponsored badge, business name, Learn more click-tracking, impression on mount), /ad/[id] detail w/ CommentsSection (extracted shared component, also used by post/[id]), /ads Ad Manager (list+toggle), /ads/create, /ads/[id] analytics (totals, bar chart, settings, delete), /admin panel (density, user roles, all ads), settings rows gated by role, notifications route is_ad -> /ad/{id}.
+- Backend flows verified via /tmp/test_ads.py — all passing. UI smoke: feed ad + Ad Manager verified.

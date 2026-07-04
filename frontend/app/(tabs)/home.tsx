@@ -13,8 +13,11 @@ import { useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { PostCard, type Post } from "@/src/components/PostCard";
+import { AdCard, type Ad } from "@/src/components/AdCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+
+type FeedItem = (Post & { type?: undefined }) | Ad;
 
 const TABS: { key: "latest" | "trending" | "nearby" | "pulse"; label: string }[] = [
   { key: "latest", label: "Latest" },
@@ -25,13 +28,13 @@ const TABS: { key: "latest" | "trending" | "nearby" | "pulse"; label: string }[]
 
 export default function Home() {
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("latest");
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const rows = await api.get<Post[]>(`/posts?tab=${tab}`);
+      const rows = await api.get<FeedItem[]>(`/posts?tab=${tab}`);
       setPosts(rows);
     } catch {
       setPosts([]);
@@ -101,12 +104,16 @@ export default function Home() {
               subtitle="Be the first to share something in this tab."
             />
           }
-          renderItem={({ item }) => (
-            <PostCard
-              post={item}
-              onChange={(updated) => setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))}
-            />
-          )}
+          renderItem={({ item }) =>
+            item.type === "ad" ? (
+              <AdCard ad={item} />
+            ) : (
+              <PostCard
+                post={item}
+                onChange={(updated) => setPosts((prev) => prev.map((p) => (p.id === updated.id && p.type !== "ad" ? updated : p)))}
+              />
+            )
+          }
         />
       )}
     </SafeAreaView>

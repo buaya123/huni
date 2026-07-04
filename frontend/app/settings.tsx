@@ -58,6 +58,24 @@ export default function Settings() {
           <Row icon="mail-outline" label="Helpful score" value={String(user?.helpful_score ?? 0)} testID="acct-helpful" />
         </View>
 
+        {(user?.role === "advertiser" || user?.role === "admin") && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Monetization</Text>
+            <Pressable style={styles.navRow} onPress={() => router.push("/ads")} testID="ad-manager-btn">
+              <Ionicons name="megaphone-outline" size={18} color={colors.brand} />
+              <Text style={styles.navLabel}>Ad Manager</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+            </Pressable>
+            {user?.role === "admin" && (
+              <Pressable style={styles.navRow} onPress={() => router.push("/admin")} testID="admin-panel-btn">
+                <Ionicons name="shield-checkmark-outline" size={18} color={colors.brand} />
+                <Text style={styles.navLabel}>Admin Panel</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+              </Pressable>
+            )}
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Safety & privacy</Text>
           <InfoRow icon="lock-closed-outline" label="Your posts appear only under your alias." />
@@ -121,6 +139,8 @@ const styles = StyleSheet.create({
   sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   sectionTitle: { fontSize: font.base, fontWeight: "700", color: colors.onSurface },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 6 },
+  navRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 10, minHeight: 44 },
+  navLabel: { flex: 1, color: colors.onSurface, fontWeight: "600", fontSize: font.base },
   rowLabel: { color: colors.onSurfaceTertiary, flex: 1 },
   rowValue: { color: colors.onSurface, fontWeight: "700" },
   rowInfo: { color: colors.onSurfaceTertiary, flex: 1, fontSize: font.sm, lineHeight: 18 },

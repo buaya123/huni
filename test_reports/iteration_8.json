@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 8 — Ads & Monetization end-to-end. Backend: 108/108 pytest PASSED (77 iter1-7 regression + 31 NEW iter8). Iter8 covers role resolution (demo1 admin via ADMIN_EMAILS, demo2 advertiser, demo3 user), admin endpoints (/admin/settings GET/PATCH with 2-20 bounds + 422 out-of-range, /admin/users search excludes password, /admin/users/{id}/role blocked 400 on admins, toggle user<->advertiser round-trip, /admin/ads with stats+advertiser), 403 gating for regular+advertiser on all /admin/*, ads CRUD (create 403 for regular user & 200 for advertiser, GET, /ads/mine with stats keys, PATCH by owner & admin, PATCH 403 for other user, DELETE soft-deletes with 404 on subsequent GET and removal from /ads/mine), tracking (3 distinct-user impressions -> unique_viewers>=3, dup impression does not inflate unique, click returns link_url + tracked, /ads/{id}/analytics has 14-day daily series with date/impressions/clicks + recent_clicks, 403 for non-owner, admin can access), feed injection (with N=2 dense feed injects ads into /posts?tab=latest, pulse tab NEVER contains ads across all runs, disabled ad w/ weight=10 never appears across 4 refreshes at N=2 confirming enabled filter), ad comments (user can comment on ad; comment_count on ad doc increments; ad owner can DELETE another user's comment; disabled comments_enabled returns 403 on POST /posts/{ad_id}/comments). Also updated legacy test_huni_api.py::TestPostsFeed to tolerate injected ads (previously failed with KeyError 'audience' on nearby). Frontend (390x844) verified end-to-end: (1) demo3 feed shows 6 AdCards with SPONSORED pill + Learn more + comments pill, tapping opens /ad/{id} detail with CommentsSection + comment input; (2) demo2 Settings shows ad-manager-btn but NOT admin-panel-btn, Ad Manager lists 10 ads + new-ad-btn, create form (business/title/content/link + weight stepper 5->7 confirmed) publishes ad and lands on /ads with new row visible; tapping row opens analytics screen showing ad-totals grid + ad-daily-chart + setting-enabled + setting-comments + setting-weight-value=7 + delete-ad-btn; delete-ad-btn two-tap confirm works (1st tap flips label to 'Tap again to confirm delete', 2nd tap deletes and routes to /ads); (3) demo1 Settings shows BOTH ad-manager-btn AND admin-panel-btn, Admin Panel density stepper +/- round-trips (3->4->3), search 'demo3' returns 2 rows and 'Make advertiser' promotion flips to 'Revoke' testID, All ads list shows 10 rows each with admin-ad-toggle-{id}; (4) Regression: /post/{id} threaded comments render (comment-rail-* + 3 comment-head-* nodes present) confirming shared CommentsSection extraction did not break normal posts.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/uploads", "issue": "Carried over from iter7: base64.b64decode(data[:100]) with default validate=False makes the documented 400 branch effectively unreachable. Not iter8 scope."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "deprecated-style-props", "issue": "RN Web console warns: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' and 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking, from RN Web internals / older style usages; not new in iter8."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_ads.py",
+    "/app/backend/tests/test_iteration7_images.py",
+    "/app/backend/tests/test_iteration6_v1.py",
+    "/app/backend/tests/test_iteration5_google_auth.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_huni_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "No functional bugs found in iter8 scope. All 31 new tests pass; all 3 role-gated UI flows (regular/advertiser/admin) verified live.",
+    "OPTIONAL cosmetic: /auth/me does not include 'email' in its response (I adjusted the test accordingly). If the frontend ever needs to render the signed-in email, main agent may want to expose it.",
+    "OPTIONAL non-blocking: RN Web console still warns about deprecated 'shadow*' and 'pointerEvents' style props (pre-existing). Consider migrating to 'boxShadow' / 'style.pointerEvents' when convenient."
+  ],
+  "critical_code_review_comments": [
+    "server.py _inject_ads (line 556-592): correctly pulls only status=active & enabled=true ads, respects settings.ad_every_n_posts, uses weighted-random sampling without replacement based on frequency_weight, and is gated out of the 'pulse' tab (only latest/trending/nearby paths call it). The 'ai == 0 and picked' fallback (line 590-591) forces one ad when feed is shorter than every_n — behaves sensibly.",
+    "server.py POST /ads (line 792-811): correctly gates on role advertiser|admin, defaults enabled/comments_enabled=True, truncates image_ids to :4, and returns _hydrate_ad shape matching the AdCard frontend contract.",
+    "server.py PATCH /ads/{id} (line 834-849): _get_owned_ad enforces owner OR admin — matches expected 'only owner/admin' rule. Correctly returns 404 for missing, 403 for non-owner.",
+    "server.py /ads/{id}/analytics (line 859-891): 14-day series pre-fills every date with zeros so charts always have 14 columns; recent_clicks limited to 50 (frontend slices to 10). Owner/admin gating via _get_owned_ad.",
+    "server.py delete_comment (line 1141-1157): handles the ad-owner moderation case by looking up ad advertiser_id and permitting delete when is_ad_owner OR role==admin OR is_owner. comment_count is decremented on ads via db.ads.update_one. Solid.",
+    "server.py POST /posts/{post_id}/comments (line 1016 area): treats ads via db.ads.find_one when the post_id belongs to an ad, respects comments_enabled=False by returning 403, and increments ad comment_count. Verified via tests.",
+    "AdCard.tsx: impression fires exactly once per mount via trackedRef ref (prevents React StrictMode double-fire from double-counting). onLearnMore fires /click and opens link_url returned by backend — good separation of tracking + link resolution.",
+    "settings.tsx (line 61-77): Monetization section only renders when user.role is advertiser|admin; admin-panel-btn nested inside that block and gated by user.role==='admin'. Regular users see neither — verified live.",
+    "admin.tsx: correctly guards render with isAdmin check (line 100), stepper clamps to [2,20], optimistic toggle for ad enable with rollback on error, and correct testIDs across the flow (density-*, admin-user-*, promote-*, demote-*, admin-ad-toggle-*).",
+    "ads/create.tsx: weight stepper clamps [1,10], requires business+title+content, uploads images via /api/uploads first then POST /ads, and router.replace('/ads') keeps the back stack clean. Nice.",
+    "ads/[id].tsx (analytics): two-tap delete confirm implemented via local confirmDelete state (line 36, 58-67); first tap changes button label, second tap fires DELETE. Fine UX — but note no timeout on confirm state, so it lingers indefinitely (acceptable)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8_ads.py (NEW — 31 iter8 tests: roles, admin CRUD, ads CRUD, tracking, analytics, feed injection, ad comments, soft delete)",
+    "/app/backend/tests/test_huni_api.py (test_latest/test_nearby/test_pulse updated to tolerate iter8 ad injection — filter out type=='ad' items before asserting on post fields; also verifies pulse tab has no ads)"
+  ],
+  "success_rate": {"backend": "100% (108/108 including 31 iter8 tests)", "frontend": "100% for all iter8-scope flows: feed AdCard render + sponsored/CTA/comment pill, ad detail + comments, role-gated Settings for advertiser & admin, Ad Manager list + create form + weight stepper, analytics totals+chart+switches+weight+two-tap delete, admin density stepper + user search + promote/revoke + all-ads toggles, post detail threading regression"},
+  "seed_data_creation": "iter8 pytest creates ~5-6 TEST_i8-prefixed ads (Coffee, Analytics, Comments, Doomed [soft-deleted], DisabledMarker [soft-deleted]) owned by demo2, plus a handful of TEST_i8 comments. UI test also created 1 additional 'TEST_i8 UI <ts>' ad which was then soft-deleted through the delete-ad-btn flow. Global admin setting ad_every_n_posts restored to 4 after test run. All TEST_i8 data has status='deleted' or remains active on demo2's ad list; can be pruned by soft-delete or business_name LIKE 'TEST_i8%'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Ads/monetization feature is fully wired and verified live end-to-end. Test credentials: demo1@huni.app=admin (via ADMIN_EMAILS env), demo2@huni.app=advertiser (persisted from prior iters), demo3@huni.app=regular user. Backend URL comes from EXPO_PUBLIC_BACKEND_URL. The pre-existing 'Buug Bakery' ad (id 291f44eb-d250-47a4-b050-912cfa7931d4, weight 8, owner demo2) is still active. NOTE for next agent: /api/auth/me does NOT include 'email' — only public-safe fields (id, alias, role, helpful_score). If you need the signed-in email for a test, either capture it from the login POST or ask main agent to expose it. If TestPostsFeed regressions ever change again, remember: /posts feed can now contain type=='ad' items on latest/nearby/trending tabs (but never on 'pulse') — always filter before asserting on post-only fields like audience/mood.",
+  "rca_of_issue": "N/A — no functional bugs. One test-fixture drift fixed: test_huni_api.py::TestPostsFeed was iterating raw feed items with p['audience']/p['mood'] which broke once ads (which lack those fields) started being injected. Updated tests to skip type=='ad' entries and to positively assert no ads in the pulse tab."
+}

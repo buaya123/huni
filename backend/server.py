@@ -49,6 +49,7 @@ EMERGENT_SESSION_URL = os.environ.get(
     "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
 )
 GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -203,6 +204,34 @@ class UploadIn(BaseModel):
     content_type: str = Field(default="image/jpeg", pattern="^image/(jpeg|png|webp|gif)$")
 
 
+class AdCreate(BaseModel):
+    business_name: str = Field(min_length=1, max_length=60)
+    title: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=1000)
+    link_url: Optional[str] = Field(default=None, max_length=500)
+    image_ids: Optional[List[str]] = None  # max 4
+    frequency_weight: int = Field(default=5, ge=1, le=10)
+
+
+class AdUpdate(BaseModel):
+    business_name: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    content: Optional[str] = Field(default=None, min_length=1, max_length=1000)
+    link_url: Optional[str] = Field(default=None, max_length=500)
+    image_ids: Optional[List[str]] = None
+    frequency_weight: Optional[int] = Field(default=None, ge=1, le=10)
+    enabled: Optional[bool] = None
+    comments_enabled: Optional[bool] = None
+
+
+class RoleUpdate(BaseModel):
+    role: str = Field(pattern="^(user|advertiser)$")
+
+
+class AdSettingsIn(BaseModel):
+    ad_every_n_posts: int = Field(ge=2, le=20)
+
+
 class ReactionIn(BaseModel):
     kind: str = Field(pattern="^(heart|helpful|hug|laugh)$")
 
@@ -252,7 +281,21 @@ def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
         "birthdate": u.get("birthdate", ""),
         "picture": u.get("picture", ""),
         "auth_provider": u.get("auth_provider", "password"),
+        "role": u.get("role", "user"),
     }
+
+
+async def maybe_promote_admin(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Promote a user to admin if their email is in ADMIN_EMAILS."""
+    if user.get("email", "").lower() in ADMIN_EMAILS and user.get("role") != "admin":
+        await db.users.update_one({"id": user["id"]}, {"$set": {"role": "admin"}})
+        user["role"] = "admin"
+    return user
+
+
+def require_role(user: Dict[str, Any], *roles: str) -> None:
+    if user.get("role", "user") not in roles:
+        raise HTTPException(status_code=403, detail="Not allowed")
 
 
 # ---------- websocket manager ----------
@@ -402,6 +445,7 @@ async def google_session(inp: GoogleSessionIn) -> AuthOut:
         upsert=True,
     )
     user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    user = await maybe_promote_admin(user)
     return AuthOut(token=session_token, user=public_user(user))
 
 
@@ -419,6 +463,7 @@ async def login(inp: LoginIn) -> AuthOut:
     user = await db.users.find_one({"email": email})
     if not user or not verify_pw(inp.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    user = await maybe_promote_admin(user)
     token = make_token(user["id"])
     return AuthOut(token=token, user=public_user(user))
 
@@ -508,6 +553,45 @@ async def create_post(inp: PostCreate, user: Dict[str, Any] = Depends(get_curren
     return await _hydrate_post(doc, user["id"])
 
 
+async def _inject_ads(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Insert weighted-random ads into a feed, one every N posts (admin setting)."""
+    if len(items) < 2:
+        return items
+    ads = await db.ads.find({"status": "active", "enabled": True}, {"_id": 0}).to_list(100)
+    if not ads:
+        return items
+    s = await db.settings.find_one({"key": "ads"}, {"_id": 0})
+    every_n = (s or {}).get("ad_every_n_posts", 5)
+    slots = max(1, len(items) // every_n)
+
+    # weighted sampling without replacement (frequency_weight 1-10)
+    picked: List[Dict[str, Any]] = []
+    pool = ads[:]
+    for _ in range(min(slots, len(pool))):
+        total = sum(a.get("frequency_weight", 5) for a in pool)
+        r = random.uniform(0, total)
+        acc = 0.0
+        chosen = pool[-1]
+        for a in pool:
+            acc += a.get("frequency_weight", 5)
+            if r <= acc:
+                chosen = a
+                break
+        pool.remove(chosen)
+        picked.append(chosen)
+
+    out: List[Dict[str, Any]] = []
+    ai = 0
+    for i, p in enumerate(items):
+        out.append(p)
+        if (i + 1) % every_n == 0 and ai < len(picked):
+            out.append(_hydrate_ad(picked[ai]))
+            ai += 1
+    if ai == 0 and picked:  # feed shorter than every_n — still show one ad
+        out.insert(min(2, len(out)), _hydrate_ad(picked[0]))
+    return out
+
+
 @api.get("/posts")
 async def list_posts(
     tab: str = Query(default="latest", pattern="^(latest|trending|nearby|pulse)$"),
@@ -539,11 +623,14 @@ async def list_posts(
             score = (sum(p.get("reactions", {}).values()) * 2 + p.get("comment_count", 0) * 3) / (age_hr ** 0.8)
             scored.append((score, p))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [await _hydrate_post(p, user["id"]) for _, p in scored[:limit]]
+        return await _inject_ads([await _hydrate_post(p, user["id"]) for _, p in scored[:limit]])
 
     cursor = db.posts.find(query, {"_id": 0}).sort(sort).limit(limit)
     rows = await cursor.to_list(limit)
-    return [await _hydrate_post(p, user["id"]) for p in rows]
+    hydrated = [await _hydrate_post(p, user["id"]) for p in rows]
+    if tab == "pulse":
+        return hydrated
+    return await _inject_ads(hydrated)
 
 
 @api.get("/posts/{post_id}")
@@ -666,6 +753,229 @@ async def get_image(image_id: str) -> Response:
     )
 
 
+# ---------- routes: ads ----------
+def _hydrate_ad(a: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "type": "ad",
+        "id": a["id"],
+        "advertiser_id": a["advertiser_id"],
+        "business_name": a["business_name"],
+        "title": a["title"],
+        "content": a["content"],
+        "link_url": a.get("link_url"),
+        "images": a.get("image_ids", []) or [],
+        "enabled": a.get("enabled", True),
+        "comments_enabled": a.get("comments_enabled", True),
+        "comment_count": a.get("comment_count", 0),
+        "frequency_weight": a.get("frequency_weight", 5),
+        "created_at": a["created_at"],
+    }
+
+
+async def _ad_stats(ad_id: str) -> Dict[str, Any]:
+    impressions = await db.ad_events.count_documents({"ad_id": ad_id, "type": "impression"})
+    clicks = await db.ad_events.count_documents({"ad_id": ad_id, "type": "click"})
+    unique_viewers = len(await db.ad_events.distinct("user_id", {"ad_id": ad_id, "type": "impression"}))
+    ctr = round(clicks / impressions * 100, 2) if impressions else 0.0
+    return {"impressions": impressions, "clicks": clicks, "unique_viewers": unique_viewers, "ctr": ctr}
+
+
+async def _get_owned_ad(ad_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    a = await db.ads.find_one({"id": ad_id, "status": "active"}, {"_id": 0})
+    if not a:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    if a["advertiser_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    return a
+
+
+@api.post("/ads")
+async def create_ad(inp: AdCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "advertiser", "admin")
+    doc = {
+        "id": new_id(),
+        "advertiser_id": user["id"],
+        "business_name": inp.business_name.strip(),
+        "title": inp.title.strip(),
+        "content": inp.content.strip(),
+        "link_url": (inp.link_url or "").strip() or None,
+        "image_ids": (inp.image_ids or [])[:4],
+        "frequency_weight": inp.frequency_weight,
+        "enabled": True,
+        "comments_enabled": True,
+        "comment_count": 0,
+        "status": "active",
+        "created_at": now().isoformat(),
+    }
+    await db.ads.insert_one(doc)
+    return _hydrate_ad(doc)
+
+
+@api.get("/ads/mine")
+async def my_ads(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    require_role(user, "advertiser", "admin")
+    rows = await db.ads.find({"advertiser_id": user["id"], "status": "active"}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    out = []
+    for a in rows:
+        item = _hydrate_ad(a)
+        item["stats"] = await _ad_stats(a["id"])
+        out.append(item)
+    return out
+
+
+@api.get("/ads/{ad_id}")
+async def get_ad(ad_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    a = await db.ads.find_one({"id": ad_id, "status": "active"}, {"_id": 0})
+    if not a:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    return _hydrate_ad(a)
+
+
+@api.patch("/ads/{ad_id}")
+async def update_ad(ad_id: str, inp: AdUpdate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    a = await _get_owned_ad(ad_id, user)
+    updates: Dict[str, Any] = {}
+    for field in ("business_name", "title", "content", "frequency_weight", "enabled", "comments_enabled"):
+        val = getattr(inp, field)
+        if val is not None:
+            updates[field] = val.strip() if isinstance(val, str) else val
+    if inp.link_url is not None:
+        updates["link_url"] = inp.link_url.strip() or None
+    if inp.image_ids is not None:
+        updates["image_ids"] = inp.image_ids[:4]
+    if updates:
+        await db.ads.update_one({"id": ad_id}, {"$set": updates})
+        a.update(updates)
+    return _hydrate_ad(a)
+
+
+@api.delete("/ads/{ad_id}")
+async def delete_ad(ad_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+    await _get_owned_ad(ad_id, user)
+    await db.ads.update_one({"id": ad_id}, {"$set": {"status": "deleted", "enabled": False}})
+    return {"status": "ok"}
+
+
+@api.get("/ads/{ad_id}/analytics")
+async def ad_analytics(ad_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    a = await _get_owned_ad(ad_id, user)
+    totals = await _ad_stats(ad_id)
+
+    # daily series: last 14 days
+    days: List[Dict[str, Any]] = []
+    today = now().date()
+    day_keys = [(today - timedelta(days=i)).isoformat() for i in range(13, -1, -1)]
+    counts: Dict[str, Dict[str, int]] = {k: {"impressions": 0, "clicks": 0} for k in day_keys}
+    since = (today - timedelta(days=13)).isoformat()
+    events = await db.ad_events.find(
+        {"ad_id": ad_id, "created_at": {"$gte": since}}, {"_id": 0}
+    ).to_list(50000)
+    for e in events:
+        day = e["created_at"][:10]
+        if day in counts:
+            key = "impressions" if e["type"] == "impression" else "clicks"
+            counts[day][key] += 1
+    for k in day_keys:
+        days.append({"date": k, **counts[k]})
+
+    # recent click timestamps (last 50)
+    clicks = await db.ad_events.find(
+        {"ad_id": ad_id, "type": "click"}, {"_id": 0, "created_at": 1}
+    ).sort("created_at", -1).limit(50).to_list(50)
+
+    return {
+        "ad": _hydrate_ad(a),
+        "totals": totals,
+        "daily": days,
+        "recent_clicks": [c["created_at"] for c in clicks],
+    }
+
+
+@api.post("/ads/{ad_id}/impression")
+async def ad_impression(ad_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+    await db.ad_events.insert_one({
+        "id": new_id(), "ad_id": ad_id, "user_id": user["id"],
+        "type": "impression", "created_at": now().isoformat(),
+    })
+    return {"status": "ok"}
+
+
+@api.post("/ads/{ad_id}/click")
+async def ad_click(ad_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    a = await db.ads.find_one({"id": ad_id, "status": "active"}, {"_id": 0})
+    if not a:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    await db.ad_events.insert_one({
+        "id": new_id(), "ad_id": ad_id, "user_id": user["id"],
+        "type": "click", "created_at": now().isoformat(),
+    })
+    return {"status": "ok", "link_url": a.get("link_url")}
+
+
+# ---------- routes: admin ----------
+@api.get("/admin/users")
+async def admin_search_users(
+    q: str = Query(default=""),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    require_role(user, "admin")
+    query: Dict[str, Any] = {}
+    if q.strip():
+        rx = {"$regex": q.strip(), "$options": "i"}
+        query = {"$or": [{"email": rx}, {"alias": rx}, {"first_name": rx}, {"last_name": rx}]}
+    rows = await db.users.find(query, {"_id": 0, "password": 0}).sort("joined_at", -1).limit(20).to_list(20)
+    return [
+        {
+            "id": u["id"], "alias": u["alias"], "email": u.get("email", ""),
+            "first_name": u.get("first_name", ""), "last_name": u.get("last_name", ""),
+            "role": u.get("role", "user"),
+        }
+        for u in rows
+    ]
+
+
+@api.post("/admin/users/{user_id}/role")
+async def admin_set_role(user_id: str, inp: RoleUpdate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+    require_role(user, "admin")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "role": 1})
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="Cannot change an admin's role")
+    await db.users.update_one({"id": user_id}, {"$set": {"role": inp.role}})
+    return {"status": "ok", "role": inp.role}
+
+
+@api.get("/admin/ads")
+async def admin_list_ads(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    require_role(user, "admin")
+    rows = await db.ads.find({"status": "active"}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    out = []
+    for a in rows:
+        item = _hydrate_ad(a)
+        item["stats"] = await _ad_stats(a["id"])
+        owner = await db.users.find_one({"id": a["advertiser_id"]}, {"_id": 0, "alias": 1, "email": 1})
+        item["advertiser"] = {"alias": owner.get("alias", "?"), "email": owner.get("email", "")} if owner else None
+        out.append(item)
+    return out
+
+
+@api.get("/admin/settings")
+async def admin_get_settings(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    s = await db.settings.find_one({"key": "ads"}, {"_id": 0})
+    return {"ad_every_n_posts": (s or {}).get("ad_every_n_posts", 5)}
+
+
+@api.patch("/admin/settings")
+async def admin_update_settings(inp: AdSettingsIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    await db.settings.update_one(
+        {"key": "ads"}, {"$set": {"ad_every_n_posts": inp.ad_every_n_posts}}, upsert=True
+    )
+    return {"ad_every_n_posts": inp.ad_every_n_posts}
+
+
 # ---------- routes: comments ----------
 @api.get("/posts/{post_id}/comments")
 async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
@@ -700,7 +1010,14 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
 
 @api.post("/posts/{post_id}/comments")
 async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    is_ad = False
     p = await db.posts.find_one({"id": post_id})
+    if not p:
+        p = await db.ads.find_one({"id": post_id, "status": "active"})
+        if p:
+            is_ad = True
+            if not p.get("comments_enabled", True):
+                raise HTTPException(status_code=403, detail="Comments are disabled on this ad")
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
     if not inp.content.strip() and not (inp.image_ids or []):
@@ -728,22 +1045,27 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         "image_ids": (inp.image_ids or [])[:4],
     }
     await db.comments.insert_one(doc)
-    await db.posts.update_one({"id": post_id}, {"$inc": {"comment_count": 1}})
+    if is_ad:
+        await db.ads.update_one({"id": post_id}, {"$inc": {"comment_count": 1}})
+    else:
+        await db.posts.update_one({"id": post_id}, {"$inc": {"comment_count": 1}})
     await db.users.update_one({"id": user["id"]}, {"$inc": {"comment_count": 1}})
 
-    # notify post author on top-level comment
-    if not inp.parent_comment_id and p["author_id"] != user["id"]:
+    # notify post author / ad owner on top-level comment
+    owner_id = p["advertiser_id"] if is_ad else p["author_id"]
+    if not inp.parent_comment_id and owner_id != user["id"]:
         await db.notifications.insert_one({
             "id": new_id(),
-            "user_id": p["author_id"],
+            "user_id": owner_id,
             "type": "comment",
             "actor_alias": user["alias"],
             "post_id": post_id,
+            "is_ad": is_ad,
             "content_preview": inp.content[:80] or "📷 Photo",
             "created_at": now().isoformat(),
             "read": False,
         })
-        await ws_manager.send_to(p["author_id"], {"type": "notification"})
+        await ws_manager.send_to(owner_id, {"type": "notification"})
 
     # notify parent-comment author on a reply
     if parent_author_id and parent_author_id != user["id"]:
@@ -753,6 +1075,7 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
             "type": "reply",
             "actor_alias": user["alias"],
             "post_id": post_id,
+            "is_ad": is_ad,
             "content_preview": inp.content[:80] or "📷 Photo",
             "created_at": now().isoformat(),
             "read": False,
@@ -823,10 +1146,16 @@ async def delete_comment(comment_id: str, user: Dict[str, Any] = Depends(get_cur
     c = await db.comments.find_one({"id": comment_id})
     if not c:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if c["author_id"] != user["id"]:
+    ad = await db.ads.find_one({"id": c["post_id"]}, {"_id": 0, "advertiser_id": 1})
+    is_owner = c["author_id"] == user["id"]
+    is_ad_owner = bool(ad) and ad["advertiser_id"] == user["id"]
+    if not (is_owner or is_ad_owner or user.get("role") == "admin"):
         raise HTTPException(status_code=403, detail="Not allowed")
     await db.comments.update_one({"id": comment_id}, {"$set": {"status": "deleted"}})
-    await db.posts.update_one({"id": c["post_id"]}, {"$inc": {"comment_count": -1}})
+    if ad:
+        await db.ads.update_one({"id": c["post_id"]}, {"$inc": {"comment_count": -1}})
+    else:
+        await db.posts.update_one({"id": c["post_id"]}, {"$inc": {"comment_count": -1}})
     return {"status": "ok"}
 
 
@@ -1205,6 +1534,15 @@ async def on_startup() -> None:
     await db.comments.create_index("post_id")
     await db.comments.create_index([("created_at", 1)])
     await db.images.create_index("id")
+    await db.ads.create_index("id")
+    await db.ad_events.create_index([("ad_id", 1), ("type", 1)])
+    await db.ad_events.create_index([("ad_id", 1), ("created_at", -1)])
+    # promote configured admin emails
+    if ADMIN_EMAILS:
+        await db.users.update_many(
+            {"email": {"$in": list(ADMIN_EMAILS)}, "role": {"$ne": "admin"}},
+            {"$set": {"role": "admin"}},
+        )
     await db.notifications.create_index("user_id")
     await db.conversations.create_index("participants")
     await db.messages.create_index("conversation_id")

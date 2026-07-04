@@ -13,6 +13,7 @@ type Notif = {
   actor_alias?: string;
   content_preview?: string;
   post_id?: string;
+  is_ad?: boolean;
   conversation_id?: string;
   created_at: string;
   read: boolean;
@@ -61,7 +62,7 @@ export default function Notifications() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const open = (n: Notif) => {
-    if (n.post_id) router.push(`/post/${n.post_id}`);
+    if (n.post_id) router.push(n.is_ad ? `/ad/${n.post_id}` : `/post/${n.post_id}`);
     else if (n.conversation_id) router.push(`/chat/${n.conversation_id}`);
   };
 

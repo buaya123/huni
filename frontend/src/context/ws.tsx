@@ -34,26 +34,38 @@ export function WSProvider({ children }: { children: React.ReactNode }) {
       const token = await getToken();
       if (!token) return;
       try {
-        const socket = new WebSocket(wsUrl(token));
+        //const socket = new WebSocket(wsUrl(token));
+        
+        const url = wsUrl(token);
+        console.log("WS URL:", url);
+        const socket = new WebSocket(url);
+
         wsRef.current = socket;
-        socket.onopen = () => setConnected(true);
-        socket.onclose = () => {
+        socket.onopen = () => {
+          console.log("🟢 WebSocket Connected");
+          setConnected(true);
+        };
+        socket.onclose = (e) => {
+          console.log("🔴 WebSocket Closed", e.code, e.reason);
           setConnected(false);
+
           if (!stoppedRef.current) {
-            reconnectRef.current = setTimeout(connect, 3000);
+              reconnectRef.current = setTimeout(connect, 3000);
           }
         };
         socket.onerror = () => {
           // let onclose handle reconnect
         };
         socket.onmessage = (ev) => {
+          console.log("📩 WS EVENT", ev.data);
+
           try {
-            const parsed = JSON.parse(ev.data) as WSEvent;
-            listenersRef.current.forEach((l) => l(parsed));
-          } catch {
-            // ignore
+              const parsed = JSON.parse(ev.data);
+              listenersRef.current.forEach((l) => l(parsed));
+          } catch (err) {
+              console.log(err);
           }
-        };
+      };
       } catch {
         reconnectRef.current = setTimeout(connect, 3000);
       }

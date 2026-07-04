@@ -35,6 +35,8 @@ from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
+from fastapi import Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -53,6 +55,8 @@ ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").sp
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
+
+security = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Huni API")
 api = APIRouter(prefix="/api")
@@ -120,21 +124,37 @@ async def gen_unique_alias() -> str:
     return f"User{new_id()[:8]}"
 
 
+
 async def get_current_user(
-    authorization: Optional[str] = Header(default=None),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> Dict[str, Any]:
     """Accept either a JWT (email/password auth) OR a session_token (Google auth)."""
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
-    token = authorization.split(" ", 1)[1].strip()
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing token"
+        )
+
+    token = credentials.credentials
 
     # 1) try JWT first (short-circuits when signature valid)
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+        )
+
         user_id = payload["sub"]
-        user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+
+        user = await db.users.find_one(
+            {"id": user_id},
+            {"_id": 0, "password": 0},
+        )
+
         if user:
             return user
+
     except jwt.PyJWTError:
         pass
 
@@ -159,6 +179,7 @@ async def get_current_user(
                 return user
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
+
 
 
 # ---------- models ----------
@@ -323,6 +344,14 @@ class WSManager:
 
 
 ws_manager = WSManager()
+
+@api.api_route("/inspect", methods=["GET", "POST"])
+async def inspect(request: Request):
+    return {
+        "method": request.method,
+        "url": str(request.url),
+        "headers": dict(request.headers),
+    }
 
 
 # ---------- routes: root/health ----------
@@ -529,7 +558,11 @@ async def _hydrate_post(p: Dict[str, Any], viewer_id: Optional[str]) -> Dict[str
 
 
 @api.post("/posts")
-async def create_post(inp: PostCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+async def create_post(
+    inp: PostCreate,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+
     doc: Dict[str, Any] = {
         "id": new_id(),
         "author_id": user["id"],
@@ -538,18 +571,25 @@ async def create_post(inp: PostCreate, user: Dict[str, Any] = Depends(get_curren
         "mood": inp.mood,
         "audience": inp.audience,
         "created_at": now().isoformat(),
-        "reactions": {},   # kind -> count
-        "reactors": {},    # user_id -> kind
+        "reactions": {},
+        "reactors": {},
         "comment_count": 0,
         "status": "active",
         "image_ids": (inp.image_ids or [])[:4],
     }
+
     if inp.mood == "pulse" and inp.pulse_options:
         doc["pulse_options"] = inp.pulse_options[:4]
         doc["pulse_votes"] = [0] * len(doc["pulse_options"])
         doc["pulse_voters"] = {}
+
     await db.posts.insert_one(doc)
-    await db.users.update_one({"id": user["id"]}, {"$inc": {"post_count": 1}})
+
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$inc": {"post_count": 1}},
+    )
+
     return await _hydrate_post(doc, user["id"])
 
 
@@ -1512,6 +1552,10 @@ async def seed_data() -> Dict[str, Any]:
 
 
 # ---------- app wiring ----------
+print("========== ROUTES ==========")
+for r in api.routes:
+    print(type(r).__name__, r.path)
+print("============================")
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
@@ -1557,3 +1601,4 @@ async def on_startup() -> None:
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     client.close()
+

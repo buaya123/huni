@@ -17,6 +17,9 @@ import { Avatar } from "@/src/components/Avatar";
 import { ImageViewer } from "@/src/components/PostImages";
 import { pickImages, uploadImages, type PickedImage } from "@/src/utils/imagePicker";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { useRouter } from "expo-router";
+
+const router = useRouter();
 
 export type Comment = {
   id: string;
@@ -192,12 +195,20 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
       <FlatList
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         testID="comments-list"
         data={threadRows}
         keyExtractor={(r) => r.comment.id}
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl }}
+        contentContainerStyle={{
+          padding: spacing.lg,
+          paddingBottom: 110,
+        }}
         ListHeaderComponent={
           <View>
             {header}
@@ -231,25 +242,56 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
                 </Pressable>
               ))}
               <View style={styles.commentBody}>
-                <Pressable
-                  onPress={() => hasReplies && toggleCollapse(item.id)}
-                  disabled={!hasReplies}
+                <View
                   style={styles.commentHead}
                   testID={`comment-head-${item.id}`}
                 >
-                  <Avatar alias={item.author.alias} size={row.depth > 0 ? 22 : 26} />
-                  <Text style={styles.cAlias}>{item.author.alias}</Text>
-                  <Text style={styles.cTime}>· {timeAgo(item.created_at)}</Text>
-                  <View style={{ flex: 1 }} />
-                  {row.collapsed && (
-                    <View style={styles.collapsedPill} testID={`comment-collapsed-pill-${item.id}`}>
-                      <Ionicons name="chevron-down" size={12} color={colors.onBrandTertiary} />
-                      <Text style={styles.collapsedPillText}>
-                        {row.descendants} {row.descendants === 1 ? "reply" : "replies"}
-                      </Text>
-                    </View>
-                  )}
-                </Pressable>
+
+                  <Pressable
+                    onPress={() => router.push(`/user/${item.author.id}`)}
+                    style={styles.authorPressable}
+                    hitSlop={6}
+                  >
+                    <Avatar
+                      alias={item.author.alias}
+                      size={row.depth > 0 ? 22 : 26}
+                    />
+
+                    <Text style={styles.cAlias}>
+                      {item.author.alias}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => hasReplies && toggleCollapse(item.id)}
+                    style={styles.commentCollapseArea}
+                    disabled={!hasReplies}
+                  >
+
+                    <Text style={styles.cTime}>
+                      · {timeAgo(item.created_at)}
+                    </Text>
+
+                    {row.collapsed && (
+                      <View
+                        style={styles.collapsedPill}
+                        testID={`comment-collapsed-pill-${item.id}`}
+                      >
+                        <Ionicons
+                          name="chevron-down"
+                          size={12}
+                          color={colors.onBrandTertiary}
+                        />
+
+                        <Text style={styles.collapsedPillText}>
+                          {row.descendants} {row.descendants === 1 ? "reply" : "replies"}
+                        </Text>
+                      </View>
+                    )}
+
+                  </Pressable>
+
+                </View>
                 {row.collapsed ? (
                   <Text style={styles.cBodyCollapsed} numberOfLines={1}>
                     {item.content || (item.images?.length ? "📷 Photo" : "")}
@@ -414,6 +456,16 @@ const styles = StyleSheet.create({
   disabledNote: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
+  },
+  authorPressable: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  commentCollapseArea: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
   },
   disabledText: { color: colors.muted, fontSize: font.sm },
   threadRow: { flexDirection: "row", marginBottom: 2 },

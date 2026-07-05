@@ -57,6 +57,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {
@@ -76,7 +77,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "home" : "home-outline"} size={22} color={color} />
           ),
-          tabBarTestID: "tab-home",
+
         }}
       />
       <Tabs.Screen
@@ -89,7 +90,7 @@ export default function TabsLayout() {
               <Badge count={notifCount} />
             </View>
           ),
-          tabBarTestID: "tab-notifications",
+
         }}
       />
       <Tabs.Screen
@@ -99,7 +100,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "add-circle" : "add-circle-outline"} size={26} color={color} />
           ),
-          tabBarTestID: "tab-create",
+
         }}
       />
       <Tabs.Screen
@@ -112,7 +113,7 @@ export default function TabsLayout() {
               <Badge count={msgUnread} />
             </View>
           ),
-          tabBarTestID: "tab-messages",
+
         }}
       />
       <Tabs.Screen
@@ -122,7 +123,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "person" : "person-outline"} size={22} color={color} />
           ),
-          tabBarTestID: "tab-profile",
+
         }}
       />
     </Tabs>

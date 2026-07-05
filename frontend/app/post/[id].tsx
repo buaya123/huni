@@ -112,13 +112,32 @@ export default function PostDetail() {
         </View>
       )}
 
-      <CommentsSection
+      <View style={{ flex: 1 }}>
+    <CommentsSection
         targetId={id}
-        header={<PostCard post={post} onChange={setPost} onPress={() => { /* stay */ }} mode="detail" />}
-        onCountChange={(delta) =>
-          setPost((prev) => (prev ? { ...prev, comment_count: Math.max(0, (prev.comment_count || 0) + delta) } : prev))
+        header={
+            <PostCard
+                post={post}
+                onChange={setPost}
+                onPress={() => {}}
+                mode="detail"
+            />
         }
-      />
+        onCountChange={(delta) =>
+            setPost((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          comment_count: Math.max(
+                              0,
+                              (prev.comment_count || 0) + delta
+                          ),
+                      }
+                    : prev
+            )
+        }
+    />
+</View>
     </SafeAreaView>
   );
 }

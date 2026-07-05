@@ -21,6 +21,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.emergent.candidlocal.au1gbt",
       "permissions": ["android.permission.READ_MEDIA_IMAGES"]
     },

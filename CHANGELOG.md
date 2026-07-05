@@ -7,3 +7,19 @@
 ### Changed
 - Improved backend setup documentation.
 
+CHANGE #021
+
+File
+
+frontend/src/components/CommentsSection.tsx
+
+Status
+
+🟡 MODIFY
+
+Purpose
+
+Separate profile navigation from thread collapsing.
+Avatar/name open the user's profile.
+Timestamp and reply indicator handle collapsing.
+Keeps the interaction consistent with the rest of Huni.

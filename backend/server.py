@@ -52,7 +52,7 @@ EMERGENT_SESSION_URL = os.environ.get(
 )
 GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
-
+print("ADMIN_EMAILS =", ADMIN_EMAILS)
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 

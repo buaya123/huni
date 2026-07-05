@@ -5,12 +5,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "huni",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.candidlocal.au1gbt",
+      "bundleIdentifier": "com.huni.mobile",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Share photos from your gallery in posts and comments"
       }
@@ -22,7 +22,7 @@
       },
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
-      "package": "com.emergent.candidlocal.au1gbt",
+      "package": "com.huni.mobile",
       "permissions": ["android.permission.READ_MEDIA_IMAGES"]
     },
     "web": {

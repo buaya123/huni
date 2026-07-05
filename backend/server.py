@@ -1327,6 +1327,37 @@ async def list_messages(conversation_id: str, user: Dict[str, Any] = Depends(get
     )
     return rows
 
+@api.get("/chat/{conversation_id}/status")
+async def conversation_status(
+    conversation_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+
+    conv = await db.conversations.find_one({"id": conversation_id})
+
+    if not conv or user["id"] not in conv["participants"]:
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    other_id = next(
+        (p for p in conv["participants"] if p != user["id"]),
+        None,
+    )
+
+    blocked_by_me = await db.blocks.find_one({
+        "blocker_id": user["id"],
+        "target_user_id": other_id,
+    })
+
+    blocked_by_other = await db.blocks.find_one({
+        "blocker_id": other_id,
+        "target_user_id": user["id"],
+    })
+
+    return {
+        "blocked": bool(blocked_by_me or blocked_by_other),
+        "blocked_by_me": bool(blocked_by_me),
+        "blocked_by_other": bool(blocked_by_other),
+    }
 
 @api.post("/chat/{conversation_id}/messages")
 async def send_message(conversation_id: str, inp: MessageIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:

@@ -28,6 +28,12 @@ type Message = {
   created_at: string;
 };
 
+type ConversationStatus = {
+  blocked: boolean;
+  blocked_by_me: boolean;
+  blocked_by_other: boolean;
+};
+
 export default function ChatDetail() {
   const { id, alias, userId } = useLocalSearchParams<{ id: string; alias?: string; userId?: string }>();
   const router = useRouter();
@@ -37,13 +43,23 @@ export default function ChatDetail() {
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState<ConversationStatus>({
+    blocked: false,
+    blocked_by_me: false,
+    blocked_by_other: false,
+  });
   const [showActions, setShowActions] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
 
   const load = useCallback(async () => {
     try {
-      const rows = await api.get<Message[]>(`/chat/${id}/messages`);
+      const [rows, conversationStatus] = await Promise.all([
+        api.get<Message[]>(`/chat/${id}/messages`),
+        api.get<ConversationStatus>(`/chat/${id}/status`),
+      ]);
+
       setMessages(rows);
+      setStatus(conversationStatus);
     } catch {
       setMessages([]);
     } finally {
@@ -73,6 +89,7 @@ export default function ChatDetail() {
   }, [messages.length]);
 
   const submit = async () => {
+    if (status.blocked) return;
     if (!text.trim() || sending) return;
     setSending(true);
     const tmp = text.trim();
@@ -137,6 +154,21 @@ export default function ChatDetail() {
       )}
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+        {status.blocked && (
+        <View style={styles.blockBanner} testID="chat-block-banner">
+          <Ionicons
+            name="ban-outline"
+            size={18}
+            color={colors.error}
+          />
+
+          <Text style={styles.blockBannerText}>
+            {status.blocked_by_me
+              ? "You blocked this user. Unblock them to continue chatting."
+              : "You can't send messages to this user."}
+          </Text>
+        </View>
+      )}
         {loading ? (
           <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
         ) : (
@@ -162,15 +194,22 @@ export default function ChatDetail() {
 
         <View style={styles.inputBar}>
           <TextInput
+            editable={!status.blocked}
             testID="message-input"
             value={text}
             onChangeText={setText}
-            placeholder="Type a message..."
+            placeholder={
+              status.blocked
+                ? status.blocked_by_me
+                  ? "Unblock this user to continue chatting..."
+                  : "Messaging unavailable."
+                : "Type a message..."
+            }
             placeholderTextColor={colors.muted}
             style={styles.input}
             multiline
           />
-          <Pressable onPress={submit} disabled={!text.trim() || sending} style={styles.sendBtn} testID="send-message-btn">
+          <Pressable onPress={submit} disabled={status.blocked ||!text.trim() ||sending} style={styles.sendBtn} testID="send-message-btn">
             <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
           </Pressable>
         </View>
@@ -214,4 +253,24 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brand,
     alignItems: "center", justifyContent: "center",
   },
+  blockBanner: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: spacing.sm,
+  marginHorizontal: spacing.lg,
+  marginTop: spacing.sm,
+  marginBottom: spacing.sm,
+  padding: spacing.md,
+  borderRadius: radius.md,
+  backgroundColor: colors.surfaceSecondary,
+  borderWidth: 1,
+  borderColor: colors.error,
+},
+
+blockBannerText: {
+  flex: 1,
+  color: colors.error,
+  fontSize: font.sm,
+  fontWeight: "600",
+},
 });

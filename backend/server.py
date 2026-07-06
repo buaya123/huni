@@ -204,6 +204,9 @@ class RegisterIn(BaseModel):
     birthdate: str = Field(min_length=8, max_length=10)  # "YYYY-MM-DD"
 
 
+class FirebaseAuthIn(BaseModel):
+    id_token: str
+
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
@@ -373,29 +376,27 @@ async def root() -> Dict[str, str]:
     return {"app": "Huni", "status": "ok"}
 
 
-# ---------- routes: auth ----------
-@api.post("/auth/register", response_model=AuthOut)
-async def register(inp: RegisterIn) -> AuthOut:
-    email = inp.email.lower().strip()
-    existing = await db.users.find_one({"email": email}, {"_id": 1})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    # birthdate must parse as YYYY-MM-DD
-    try:
-        datetime.strptime(inp.birthdate, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid birthdate. Use YYYY-MM-DD.")
-
+async def create_user(
+    *,
+    email: str,
+    auth_provider: str,
+    first_name: str = "",
+    last_name: str = "",
+    birthdate: str = "",
+    password: str = "",
+    picture: str = "",
+):
     alias = await gen_unique_alias()
+
     user = {
         "id": new_id(),
-        "email": email,
-        "password": hash_pw(inp.password),
-        "first_name": inp.first_name.strip(),
-        "last_name": inp.last_name.strip(),
-        "birthdate": inp.birthdate,
-        "picture": "",
-        "auth_provider": "password",
+        "email": email.lower().strip(),
+        "password": hash_pw(password) if password else "",
+        "first_name": first_name.strip(),
+        "last_name": last_name.strip(),
+        "birthdate": birthdate,
+        "picture": picture,
+        "auth_provider": auth_provider,
         "alias": alias,
         "bio": "",
         "helpful_score": 0,
@@ -406,10 +407,39 @@ async def register(inp: RegisterIn) -> AuthOut:
         "alias_regens": 0,
         "last_alias_regen": None,
     }
-    await db.users.insert_one(user)
-    token = make_token(user["id"])
-    return AuthOut(token=token, user=public_user(user))
 
+    await db.users.insert_one(user)
+
+    return user
+
+@api.post("/auth/register", response_model=AuthOut)
+async def register(inp: RegisterIn) -> AuthOut:
+    email = inp.email.lower().strip()
+
+    existing = await db.users.find_one({"email": email}, {"_id": 1})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    try:
+        datetime.strptime(inp.birthdate, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid birthdate. Use YYYY-MM-DD.")
+
+    user = await create_user(
+        email=email,
+        password=inp.password,
+        first_name=inp.first_name,
+        last_name=inp.last_name,
+        birthdate=inp.birthdate,
+        auth_provider="password",
+    )
+
+    token = make_token(user["id"])
+
+    return AuthOut(
+        token=token,
+        user=public_user(user),
+    )
 
 @api.post("/auth/google/session", response_model=AuthOut)
 async def google_session(inp: GoogleSessionIn) -> AuthOut:
@@ -509,6 +539,9 @@ async def login(inp: LoginIn) -> AuthOut:
     token = make_token(user["id"])
     return AuthOut(token=token, user=public_user(user))
 
+@api.post("/auth/firebase", response_model=AuthOut)
+async def firebase_login(inp: FirebaseAuthIn) -> AuthOut:
+    pass
 
 @api.get("/auth/me")
 async def me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:

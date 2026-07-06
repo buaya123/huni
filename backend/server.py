@@ -541,7 +541,24 @@ async def login(inp: LoginIn) -> AuthOut:
 
 @api.post("/auth/firebase", response_model=AuthOut)
 async def firebase_login(inp: FirebaseAuthIn) -> AuthOut:
-    pass
+    try:
+        decoded = firebase_auth.verify_id_token(inp.id_token)
+        print("🔥 Firebase user:", decoded)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token")
+
+    return {
+        "token": "",
+        "user": {
+            "id": "",
+            "alias": "",
+            "helpful_score": 0,
+            "post_count": 0,
+            "comment_count": 0,
+            "bio": "",
+            "joined_at": "",
+        },
+    }
 
 @api.get("/auth/me")
 async def me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:

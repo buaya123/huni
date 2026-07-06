@@ -38,6 +38,10 @@ from starlette.middleware.cors import CORSMiddleware
 from fastapi import Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
+from pathlib import Path
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -50,6 +54,15 @@ EMERGENT_SESSION_URL = os.environ.get(
     "EMERGENT_SESSION_URL",
     "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
 )
+
+FIREBASE_KEY = Path(__file__).parent / "serviceAccountKey.json"
+
+if not firebase_admin._apps:
+    cred = credentials.Certificate(str(FIREBASE_KEY))
+    firebase_admin.initialize_app(cred)
+
+print("🔥 Firebase Admin initialized")
+
 GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 print("ADMIN_EMAILS =", ADMIN_EMAILS)

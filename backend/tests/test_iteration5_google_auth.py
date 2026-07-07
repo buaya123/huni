@@ -20,7 +20,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://candid-local.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://huni-qr-campaigns.preview.emergentagent.com").rstrip("/")
 API = f"{BASE}/api"
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")

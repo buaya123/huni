@@ -15,6 +15,7 @@ type Notif = {
   post_id?: string;
   is_ad?: boolean;
   conversation_id?: string;
+  campaign_id?: string;
   created_at: string;
   read: boolean;
 };
@@ -25,6 +26,9 @@ function typeMeta(t: string) {
     case "reply": return { icon: "return-down-forward-outline" as const, text: "replied to your comment" };
     case "reaction": return { icon: "heart-outline" as const, text: "reacted to your post" };
     case "message": return { icon: "paper-plane-outline" as const, text: "sent you a message" };
+    case "reward": return { icon: "gift-outline" as const, text: "rewarded you" };
+    case "campaign_approved": return { icon: "checkmark-circle-outline" as const, text: "approved your campaign" };
+    case "campaign_rejected": return { icon: "close-circle-outline" as const, text: "reviewed your campaign" };
     default: return { icon: "notifications-outline" as const, text: "update" };
   }
 }
@@ -62,6 +66,16 @@ export default function Notifications() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const open = (n: Notif) => {
+    if (n.type === "reward" && n.campaign_id) {
+      // user got points/discount → open their rewards screen
+      router.push("/rewards");
+      return;
+    }
+    if ((n.type === "campaign_approved" || n.type === "campaign_rejected") && n.campaign_id) {
+      // partner got a decision → jump to their partner hub (shows the campaign with its new status)
+      router.push("/partner");
+      return;
+    }
     if (n.post_id) router.push(n.is_ad ? `/ad/${n.post_id}` : `/post/${n.post_id}`);
     else if (n.conversation_id) router.push(`/chat/${n.conversation_id}`);
   };

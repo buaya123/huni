@@ -20,6 +20,22 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
+function rewardSummary(c: { reward_type: string; points_amount: number; discount_label: string }): string {
+  const parts: string[] = [];
+  if (c.reward_type === "points" || c.reward_type === "both") parts.push(`+${c.points_amount} points`);
+  if (c.reward_type === "discount" || c.reward_type === "both") parts.push(c.discount_label || "discount");
+  return parts.join(" · ");
+}
+
+function ReviewField({ label, value, error }: { label: string; value: string; error?: boolean }) {
+  return (
+    <View>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={[styles.fieldValue, error && { color: colors.error }]}>{value}</Text>
+    </View>
+  );
+}
+
 type AdminUser = {
   id: string;
   alias: string;
@@ -46,9 +62,13 @@ type AdminCampaign = {
   reward_type: "points" | "discount" | "both";
   points_amount: number;
   discount_label: string;
+  terms?: string;
+  start_date?: string | null;
+  end_date?: string | null;
   status: string;
   state: string;
   redemption_count: number;
+  created_at?: string;
   rejected_reason?: string | null;
   partner: { id: string; alias: string; business_name: string; business_type: string } | null;
 };
@@ -63,6 +83,9 @@ export default function AdminPanel() {
   const [ads, setAds] = useState<AdminAd[]>([]);
   const [campaigns, setCampaigns] = useState<AdminCampaign[]>([]);
   const [promotePartner, setPromotePartner] = useState<{ userId: string; businessName: string; businessType: string } | null>(null);
+  const [reviewCampaign, setReviewCampaign] = useState<AdminCampaign | null>(null);
+  const [rejectReason, setRejectReason] = useState<string>("");
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -123,22 +146,22 @@ export default function AdminPanel() {
     try {
       await api.post(`/admin/campaigns/${c.id}/approve`);
       setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "approved", state: "live" } : x)));
-    } catch { /* ignore */ }
+      setReviewCampaign((r) => (r && r.id === c.id ? { ...r, status: "approved", state: "live" } : r));
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not approve");
+    }
   };
 
-  const rejectCampaign = async (c: AdminCampaign) => {
-    Alert.prompt?.("Reject campaign", "Reason (optional):", async (reason?: string) => {
-      try {
-        await api.post(`/admin/campaigns/${c.id}/reject`, { reason: reason ?? "" });
-        setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "rejected", state: "rejected", rejected_reason: reason ?? "" } : x)));
-      } catch { /* ignore */ }
-    });
-    // Fallback for Android (Alert.prompt only on iOS)
-    if (!Alert.prompt) {
-      try {
-        await api.post(`/admin/campaigns/${c.id}/reject`, { reason: "" });
-        setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "rejected", state: "rejected" } : x)));
-      } catch { /* ignore */ }
+  const submitReject = async () => {
+    if (!rejectingId) return;
+    try {
+      await api.post(`/admin/campaigns/${rejectingId}/reject`, { reason: rejectReason.trim() });
+      setCampaigns((prev) => prev.map((x) => (x.id === rejectingId ? { ...x, status: "rejected", state: "rejected", rejected_reason: rejectReason.trim() } : x)));
+      setReviewCampaign((r) => (r && r.id === rejectingId ? { ...r, status: "rejected", state: "rejected", rejected_reason: rejectReason.trim() } : r));
+      setRejectingId(null);
+      setRejectReason("");
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not reject");
     }
   };
 
@@ -249,9 +272,14 @@ export default function AdminPanel() {
           <Text style={styles.sectionTitle}>Campaign approvals ({campaigns.filter((c) => c.status === "pending").length} pending)</Text>
           {campaigns.length === 0 && <Text style={styles.emptyText}>No campaigns submitted yet.</Text>}
           {campaigns.map((c) => (
-            <View key={c.id} style={styles.campRow} testID={`admin-camp-${c.id}`}>
+            <Pressable
+              key={c.id}
+              style={styles.campRow}
+              onPress={() => setReviewCampaign(c)}
+              testID={`admin-camp-${c.id}`}
+            >
               <View style={{ flex: 1 }}>
-                <Text style={styles.userAlias} numberOfLines={1}>{c.title}</Text>
+                <Text style={styles.userAlias} numberOfLines={2}>{c.title}</Text>
                 <Text style={styles.userEmail} numberOfLines={1}>
                   {c.partner?.business_name ?? c.partner?.alias ?? "?"} · {c.reward_type}
                   {(c.reward_type === "points" || c.reward_type === "both") && ` · +${c.points_amount}pts`}
@@ -259,15 +287,19 @@ export default function AdminPanel() {
                 </Text>
                 <Text style={styles.userEmail} numberOfLines={2}>{c.description}</Text>
                 {c.status === "rejected" && !!c.rejected_reason && (
-                  <Text style={[styles.userEmail, { color: colors.error }]}>Rejected: {c.rejected_reason}</Text>
+                  <Text style={[styles.userEmail, { color: colors.error }]} numberOfLines={2}>Rejected: {c.rejected_reason}</Text>
                 )}
+                <View style={styles.reviewCTA}>
+                  <Ionicons name="eye-outline" size={12} color={colors.brand} />
+                  <Text style={styles.reviewCTAText}>Tap to review full details</Text>
+                </View>
               </View>
               {c.status === "pending" ? (
                 <View style={{ gap: 4 }}>
                   <Pressable style={[styles.promoteBtn, { backgroundColor: colors.success }]} onPress={() => approveCampaign(c)} testID={`approve-${c.id}`}>
                     <Text style={styles.promoteText}>Approve</Text>
                   </Pressable>
-                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.error }]} onPress={() => rejectCampaign(c)} testID={`reject-${c.id}`}>
+                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.error }]} onPress={() => { setRejectingId(c.id); setRejectReason(""); }} testID={`reject-${c.id}`}>
                     <Text style={styles.promoteText}>Reject</Text>
                   </Pressable>
                 </View>
@@ -276,7 +308,7 @@ export default function AdminPanel() {
                   <Text style={styles.roleText}>{c.status}</Text>
                 </View>
               )}
-            </View>
+            </Pressable>
           ))}
         </View>
 
@@ -301,6 +333,96 @@ export default function AdminPanel() {
           ))}
         </View>
       </ScrollView>
+
+      {/* Campaign review modal - full details, scrollable */}
+      <Modal transparent visible={!!reviewCampaign} animationType="fade" onRequestClose={() => setReviewCampaign(null)}>
+        <View style={styles.modalBg}>
+          <View style={styles.reviewCard}>
+            <View style={styles.reviewHead}>
+              <Text style={styles.modalTitle} numberOfLines={2}>{reviewCampaign?.title}</Text>
+              <Pressable onPress={() => setReviewCampaign(null)} hitSlop={12} testID="close-review">
+                <Ionicons name="close" size={24} color={colors.onSurface} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 480 }} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.sm }}>
+              {reviewCampaign && (
+                <>
+                  <View style={styles.reviewPartnerRow}>
+                    <View style={styles.reviewAvatar}>
+                      <Ionicons name="business" size={18} color={colors.brand} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.reviewPartnerName} numberOfLines={1}>
+                        {reviewCampaign.partner?.business_name || reviewCampaign.partner?.alias || "Partner"}
+                      </Text>
+                      <Text style={styles.reviewPartnerSub} numberOfLines={1}>
+                        {reviewCampaign.partner?.business_type || "Local business"}
+                      </Text>
+                    </View>
+                    <View style={[styles.roleChip, reviewCampaign.status === "approved" && styles.roleChipAdv, reviewCampaign.status === "rejected" && { backgroundColor: "#FDE0E0" }]}>
+                      <Text style={styles.roleText}>{reviewCampaign.status}</Text>
+                    </View>
+                  </View>
+
+                  <ReviewField label="Reward" value={rewardSummary(reviewCampaign)} />
+                  <ReviewField label="Description" value={reviewCampaign.description} />
+                  {!!reviewCampaign.terms && <ReviewField label="Terms" value={reviewCampaign.terms} />}
+                  <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                    <View style={{ flex: 1 }}><ReviewField label="Start" value={reviewCampaign.start_date || "—"} /></View>
+                    <View style={{ flex: 1 }}><ReviewField label="End" value={reviewCampaign.end_date || "—"} /></View>
+                  </View>
+                  <ReviewField label="Redemptions so far" value={String(reviewCampaign.redemption_count)} />
+                  {reviewCampaign.status === "rejected" && !!reviewCampaign.rejected_reason && (
+                    <ReviewField label="Previous rejection reason" value={reviewCampaign.rejected_reason} error />
+                  )}
+                </>
+              )}
+            </ScrollView>
+            {reviewCampaign?.status === "pending" ? (
+              <View style={styles.reviewActions}>
+                <Pressable style={[styles.promoteBtn, styles.demoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center" }]} onPress={() => { const c = reviewCampaign; setReviewCampaign(null); setRejectingId(c.id); setRejectReason(""); }} testID="review-reject">
+                  <Text style={[styles.promoteText, { color: colors.error }]}>Reject</Text>
+                </Pressable>
+                <Pressable style={[styles.promoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center", backgroundColor: colors.success }]} onPress={() => reviewCampaign && approveCampaign(reviewCampaign)} testID="review-approve">
+                  <Text style={styles.promoteText}>Approve</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable style={[styles.promoteBtn, { paddingVertical: 12, alignItems: "center", backgroundColor: colors.surfaceTertiary }]} onPress={() => setReviewCampaign(null)}>
+                <Text style={[styles.promoteText, { color: colors.onSurface }]}>Close</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reject reason modal (cross-platform, replaces Alert.prompt) */}
+      <Modal transparent visible={!!rejectingId} animationType="fade" onRequestClose={() => setRejectingId(null)}>
+        <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Reject campaign</Text>
+            <Text style={{ color: colors.muted, fontSize: font.sm }}>Tell the partner why (visible to them):</Text>
+            <TextInput
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              placeholder="e.g. Offer wording is unclear"
+              placeholderTextColor={colors.muted}
+              style={[styles.input, { minHeight: 70 }]}
+              multiline
+              maxLength={300}
+              testID="reject-reason-input"
+            />
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable style={[styles.promoteBtn, styles.demoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center" }]} onPress={() => setRejectingId(null)}>
+                <Text style={styles.promoteText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.promoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center", backgroundColor: colors.error }]} onPress={submitReject} testID="confirm-reject">
+                <Text style={styles.promoteText}>Reject</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal transparent visible={!!promotePartner} animationType="fade" onRequestClose={() => setPromotePartner(null)}>
         <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -386,4 +508,15 @@ const styles = StyleSheet.create({
   modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", alignItems: "center", justifyContent: "center", padding: spacing.lg },
   modalCard: { width: "100%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
   modalTitle: { fontWeight: "800", fontSize: font.lg, color: colors.onSurface },
+  reviewCard: { width: "100%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, maxHeight: "88%" },
+  reviewHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
+  reviewPartnerRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.sm, backgroundColor: colors.surfaceTertiary, borderRadius: radius.md },
+  reviewAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  reviewPartnerName: { fontWeight: "800", color: colors.onSurface },
+  reviewPartnerSub: { color: colors.muted, fontSize: font.sm, textTransform: "capitalize" },
+  reviewActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
+  fieldLabel: { fontWeight: "800", color: colors.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 },
+  fieldValue: { color: colors.onSurface, fontSize: font.base, lineHeight: 20 },
+  reviewCTA: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
+  reviewCTAText: { color: colors.brand, fontSize: 11, fontWeight: "700" },
 });

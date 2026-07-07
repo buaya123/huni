@@ -1334,6 +1334,8 @@ async def partner_create_campaign(inp: CampaignCreate, user: Dict[str, Any] = De
         "partner_id": user["id"],
         "title": inp.title.strip(),
         "description": inp.description.strip(),
+        "visible_to": "owner",
+        "allowed_partners": [],
         "discount_label": inp.discount_label.strip(),
         "terms": inp.terms.strip(),
         "image_ids": (inp.image_ids or [])[:4],
@@ -1439,10 +1441,21 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
     target = await db.users.find_one({"id": target_id}, {"_id": 0, "password": 0})
     if not target:
         raise HTTPException(status_code=404, detail="No user matches this code")
-    rows = await db.campaigns.find({"partner_id": user["id"], "status": "approved"}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    rows = await db.campaigns.find(({"status":"approved"}).to_list(200), {"_id": 0}).sort("created_at", -1).to_list(50)
     today = now().date().isoformat()
     live: List[Dict[str, Any]] = []
     for c in rows:
+        # Owner-only campaign
+        if c.get("visible_to","owner") == "owner":
+            if c["partner_id"] != user["id"]:
+                continue
+        # Global campaign
+        elif c["visible_to"] == "all":
+            pass
+        # Selected partners
+        elif c["visible_to"] == "selected":
+            if user["id"] not in c.get("allowed_partners",[]):
+                continue
         if not c.get("enabled", True):
             continue
         if c.get("start_date") and today < c["start_date"]:
@@ -1461,10 +1474,23 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
     """Apply a campaign to a user (one-shot per user per campaign)."""
     require_role(user, "partner", "admin")
     c = await db.campaigns.find_one({"id": inp.campaign_id})
+    visibility = c.get("visible_to","owner")
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    if c["partner_id"] != user["id"] and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Not your campaign")
+    if visibility == "owner":
+        if c["partner_id"] != user["id"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Not your campaign"
+            )
+        elif visibility == "selected":
+            if user["id"] not in c.get("allowed_partners",[]):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not allowed to redeem this campaign."
+                )
+        elif visibility == "all":
+            pass
     if c.get("status") != "approved" or not c.get("enabled", True):
         raise HTTPException(status_code=400, detail="Campaign is not live")
     today = now().date().isoformat()

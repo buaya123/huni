@@ -30,6 +30,8 @@ export default function CreateCampaign() {
         terms: terms.trim(),
         start_date: startDate.trim() || null,
         end_date: endDate.trim() || null,
+        visible_to: "owner",
+        allowed_partners: [],
       });
       Alert.alert(
         "Submitted",

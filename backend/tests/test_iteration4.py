@@ -12,8 +12,7 @@ import uuid
 import pytest
 import requests
 
-BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://candid-local.preview.emergentagent.com").rstrip("/")
-API = f"{BASE}/api"
+
 
 
 @pytest.fixture(scope="session", autouse=True)

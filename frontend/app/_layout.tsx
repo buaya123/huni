@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { LogBox, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-
+import "@/src/firebase/google";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/auth";
 import { WSProvider } from "@/src/context/ws";

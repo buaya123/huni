@@ -12,17 +12,21 @@ export default function Welcome() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const google = async () => {
-    setError(null);
-    setGoogleLoading(true);
-    try {
-      await signInWithGoogle();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Google sign in failed");
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
+ const google = async () => {
+  setError(null);
+  setGoogleLoading(true);
+
+  try {
+    await signInWithGoogle();
+
+    router.replace("/");
+
+  } catch (e: unknown) {
+    setError(e instanceof Error ? e.message : "Google sign in failed");
+  } finally {
+    setGoogleLoading(false);
+  }
+};
 
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>

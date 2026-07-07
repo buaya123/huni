@@ -1,4 +1,4 @@
-"""Huni backend iteration 5 tests — expanded signup + Emergent Google Auth.
+"""Huni backend iteration 5 tests — expanded signup 
 
 Coverage:
 - /auth/register with new required fields (first_name, last_name, birthdate)
@@ -20,8 +20,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://candid-local.preview.emergentagent.com").rstrip("/")
-API = f"{BASE}/api"
+
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "huni_db")
@@ -115,7 +114,6 @@ class TestSeedUsersCarryNewFields:
         assert u.get("birthdate")
 
 
-# ---------- Google session endpoint (real Emergent — bogus id → 401) ----------
 class TestGoogleSessionEndpointBogus:
     def test_bogus_session_id_returns_401(self):
         r = requests.post(f"{API}/auth/google/session", json={"session_id": "definitely-not-a-real-session"})

@@ -1,7 +1,6 @@
 """Huni backend - anonymous social app.
 
 FastAPI + MongoDB (motor). JWT auth with bcrypt password hashing.
-Emergent-managed Google Auth via session tokens.
 WebSockets for realtime chat + notifications.
 """
 from __future__ import annotations
@@ -50,10 +49,7 @@ DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ["JWT_ALGORITHM"]
 JWT_EXPIRE_DAYS = int(os.environ["JWT_EXPIRE_DAYS"])
-EMERGENT_SESSION_URL = os.environ.get(
-    "EMERGENT_SESSION_URL",
-    "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-)
+
 
 FIREBASE_KEY = Path(__file__).parent / "serviceAccountKey.json"
 
@@ -441,85 +437,6 @@ async def register(inp: RegisterIn) -> AuthOut:
         user=public_user(user),
     )
 
-@api.post("/auth/google/session", response_model=AuthOut)
-async def google_session(inp: GoogleSessionIn) -> AuthOut:
-    """Exchange an Emergent session_id (from the hosted Google flow) for our own auth token.
-
-    Upserts the user by email and stores a session_token in `user_sessions`.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client_h:
-            resp = await client_h.get(
-                EMERGENT_SESSION_URL,
-                headers={"X-Session-ID": inp.session_id},
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Google session lookup failed: {exc}")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid Google session")
-    data = resp.json()
-    email = (data.get("email") or "").lower().strip()
-    if not email:
-        raise HTTPException(status_code=400, detail="Google session missing email")
-    session_token: str = data["session_token"]
-    picture: str = data.get("picture", "") or ""
-    full_name: str = data.get("name", "") or ""
-    parts = full_name.split(" ", 1) if full_name else ["", ""]
-    first_name = parts[0]
-    last_name = parts[1] if len(parts) > 1 else ""
-
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        await db.users.update_one(
-            {"id": existing["id"]},
-            {"$set": {
-                "picture": picture or existing.get("picture", ""),
-                "first_name": existing.get("first_name") or first_name,
-                "last_name": existing.get("last_name") or last_name,
-                "auth_provider": existing.get("auth_provider") or "google",
-                "google_id": data.get("id") or existing.get("google_id"),
-            }},
-        )
-        user_id = existing["id"]
-    else:
-        alias = await gen_unique_alias()
-        user_id = new_id()
-        await db.users.insert_one({
-            "id": user_id,
-            "email": email,
-            "password": "",  # no password for google users
-            "first_name": first_name,
-            "last_name": last_name,
-            "birthdate": "",
-            "picture": picture,
-            "google_id": data.get("id"),
-            "auth_provider": "google",
-            "alias": alias,
-            "bio": "",
-            "helpful_score": 0,
-            "post_count": 0,
-            "comment_count": 0,
-            "report_count": 0,
-            "joined_at": now().isoformat(),
-            "alias_regens": 0,
-            "last_alias_regen": None,
-        })
-
-    expires_at = now() + timedelta(days=GOOGLE_SESSION_DAYS)
-    await db.user_sessions.update_one(
-        {"session_token": session_token},
-        {"$set": {
-            "session_token": session_token,
-            "user_id": user_id,
-            "created_at": now(),
-            "expires_at": expires_at,
-        }},
-        upsert=True,
-    )
-    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
-    user = await maybe_promote_admin(user)
-    return AuthOut(token=session_token, user=public_user(user))
-
 
 @api.post("/auth/logout")
 async def logout(authorization: Optional[str] = Header(default=None)) -> Dict[str, str]:
@@ -543,23 +460,38 @@ async def login(inp: LoginIn) -> AuthOut:
 async def firebase_login(inp: FirebaseAuthIn) -> AuthOut:
     try:
         decoded = firebase_auth.verify_id_token(inp.id_token)
-        print("🔥 Firebase user:", decoded)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid Firebase token")
 
-    return {
-        "token": "",
-        "user": {
-            "id": "",
-            "alias": "",
-            "helpful_score": 0,
-            "post_count": 0,
-            "comment_count": 0,
-            "bio": "",
-            "joined_at": "",
-        },
-    }
+    email = decoded["email"].lower().strip()
 
+    user = await db.users.find_one({"email": email})
+
+    if user is None:
+        full_name = decoded.get("name", "").strip()
+
+        parts = full_name.split(" ", 1)
+
+        first_name = parts[0] if parts else ""
+        last_name = parts[1] if len(parts) > 1 else ""
+
+        user = await create_user(
+            email=email,
+            auth_provider="google",
+            first_name=first_name,
+            last_name=last_name,
+            birthdate="",
+            password="",
+            picture=decoded.get("picture", ""),
+        )
+
+
+    token = make_token(user["id"])
+
+    return AuthOut(
+        token=token,
+        user=public_user(user),
+    )
 @api.get("/auth/me")
 async def me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     return public_user(user)

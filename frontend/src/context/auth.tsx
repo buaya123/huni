@@ -1,8 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
-import * as Linking from "expo-linking";
-import * as WebBrowser from "expo-web-browser";
 import { api, clearToken, getToken, setToken } from "@/src/api/client";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
+import { GoogleAuthProvider, signInWithCredential } from "firebase/auth";
+import { getFirebaseAuth } from "@/src/firebase/auth";
 
 export type User = {
   id: string;
@@ -42,60 +43,22 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
-function parseSessionIdFromUrl(url: string): string | null {
-  try {
-    const hash = url.split("#")[1];
-    if (hash) {
-      const params = new URLSearchParams(hash);
-      const s = params.get("session_id");
-      if (s) return s;
-    }
-    const query = url.split("?")[1];
-    if (query) {
-      const params = new URLSearchParams(query.split("#")[0]);
-      const s = params.get("session_id");
-      if (s) return s;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
 
-async function exchangeSessionId(sessionId: string): Promise<{ token: string; user: User }> {
-  return api.post<{ token: string; user: User }>("/auth/google/session", { session_id: sessionId });
-}
+
+
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const bootstrappedRef = useRef(false);
 
-  const consumeSessionId = useCallback(async (sessionId: string) => {
-    try {
-      const res = await exchangeSessionId(sessionId);
-      await setToken(res.token);
-      setUser(res.user);
-    } catch {
-      // ignore — bad session
-    }
-  }, []);
+ 
 
   const bootstrap = useCallback(async () => {
     setLoading(true);
 
     // On web, look for session_id in the URL FIRST (before checking existing token) to avoid races.
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      const sid = parseSessionIdFromUrl(window.location.href);
-      if (sid) {
-        try {
-          window.history.replaceState(null, "", window.location.pathname);
-        } catch { /* ignore */ }
-        await consumeSessionId(sid);
-        setLoading(false);
-        return;
-      }
-    }
+    
 
     const token = await getToken();
     if (!token) {
@@ -112,7 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [consumeSessionId]);
+  }, []);
 
   useEffect(() => {
     if (bootstrappedRef.current) return;
@@ -120,19 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     bootstrap();
   }, [bootstrap]);
 
-  // Mobile cold-start / deep-link listener
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    let sub: { remove: () => void } | undefined;
-    const handleUrl = async (url: string | null) => {
-      if (!url) return;
-      const sid = parseSessionIdFromUrl(url);
-      if (sid) await consumeSessionId(sid);
-    };
-    Linking.getInitialURL().then(handleUrl);
-    sub = Linking.addEventListener("url", (event) => handleUrl(event.url));
-    return () => sub?.remove();
-  }, [consumeSessionId]);
+
 
   const signIn = useCallback(async (email: string, password: string) => {
     const res = await api.post<{ token: string; user: User }>("/auth/login", { email, password });
@@ -147,25 +98,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    const redirectUrl =
-      Platform.OS === "web"
-        ? typeof window !== "undefined"
-          ? `${window.location.origin}/`
-          : "/"
-        : Linking.createURL("auth");
-    const authUrl = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  try {
+    // Opens the Google account picker
+    await GoogleSignin.hasPlayServices();
 
-    if (Platform.OS === "web") {
-      if (typeof window !== "undefined") window.location.href = authUrl;
-      return;
+    const response = await GoogleSignin.signIn();
+
+    // New versions return the ID token here
+    const idToken = response.data?.idToken;
+
+    if (!idToken) {
+      throw new Error("Google did not return an ID token.");
     }
 
-    const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
-    if (result.type === "success" && result.url) {
-      const sid = parseSessionIdFromUrl(result.url);
-      if (sid) await consumeSessionId(sid);
-    }
-  }, [consumeSessionId]);
+    // Sign in to Firebase
+    const credential = GoogleAuthProvider.credential(idToken);
+    const firebaseUser = await signInWithCredential(
+      getFirebaseAuth(),
+      credential
+    );
+
+    // Get Firebase ID token
+    const firebaseIdToken = await firebaseUser.user.getIdToken();
+
+    // Send it to Huni backend
+   const res = await api.post<{ token: string; user: User }>(
+      "/auth/firebase",
+      {
+        id_token: firebaseIdToken,
+      }
+    );
+    // Save Huni JWT
+    await setToken(res.token);
+    setUser(res.user);
+    console.log("TOKEN:", res.token);
+    console.log("USER:", res.user);
+    
+    console.log("✅ Huni token:", res.token);
+    console.log("✅ Huni user:", res.user);
+  } catch (err) {
+    console.error("Google Sign-In failed:", err);
+    throw err;
+  }
+}, []);
+  
 
   const signOut = useCallback(async () => {
     try { await api.post("/auth/logout"); } catch { /* ignore */ }

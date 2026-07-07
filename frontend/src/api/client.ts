@@ -45,6 +45,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     const detail = (data as { detail?: string } | null)?.detail ?? res.statusText;
+
+    console.log("Status:", res.status);
+    console.log("Body:", text);
+
     throw new ApiError(typeof detail === "string" ? detail : "Request failed", res.status);
   }
   return data as T;

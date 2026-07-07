@@ -88,3 +88,4 @@ credentials.json
 .credentials
 backend/serviceAccountKey.json
 serviceAccountKey.json
+local.properties

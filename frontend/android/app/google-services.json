@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "363520041764",
+    "project_id": "huni-393e6",
+    "storage_bucket": "huni-393e6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:363520041764:android:cafe03dd9bb607d70a09b1",
+        "android_client_info": {
+          "package_name": "com.huni.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "363520041764-d9hje4sg7nmva31bv20op59fh5rirran.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.huni.mobile",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "363520041764-r584lb94a23ip7griqthbi8a8ojkoso9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDvkllrOZ0rzi5Ng9IpVCKqfofsdfcFH30"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "363520041764-r584lb94a23ip7griqthbi8a8ojkoso9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

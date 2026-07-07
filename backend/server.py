@@ -726,6 +726,10 @@ async def _hydrate_post(p: Dict[str, Any], viewer_id: Optional[str]) -> Dict[str
     my_reaction = None
     if viewer_id and viewer_id in p.get("reactors", {}):
         my_reaction = p["reactors"][viewer_id]
+    is_bookmarked = False
+    if viewer_id:
+        bm = await db.bookmarks.find_one({"post_id": p["id"], "user_id": viewer_id})
+        is_bookmarked = bool(bm)
     return {
         "id": p["id"],
         "author": public_user(author) if author else {"id": p["author_id"], "alias": "Unknown"},
@@ -743,6 +747,8 @@ async def _hydrate_post(p: Dict[str, Any], viewer_id: Optional[str]) -> Dict[str
         "my_pulse_vote": (p.get("pulse_voters", {}) or {}).get(viewer_id) if viewer_id else None,
         "images": p.get("image_ids", []) or [],
         "status": p.get("status", "active"),
+        "is_bookmarked": is_bookmarked,
+        "bookmark_count": p.get("bookmark_count", 0),
     }
 
 
@@ -946,6 +952,39 @@ async def pulse_vote(post_id: str, inp: PulseVoteIn, user: Dict[str, Any] = Depe
     await db.posts.update_one({"id": post_id}, {"$set": {"pulse_votes": votes, "pulse_voters": voters}})
     p = await db.posts.find_one({"id": post_id}, {"_id": 0})
     return await _hydrate_post(p, user["id"])
+
+
+# ---------- routes: bookmarks ----------
+@api.post("/posts/{post_id}/bookmark")
+async def toggle_bookmark(post_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    p = await db.posts.find_one({"id": post_id}, {"_id": 0, "id": 1})
+    if not p:
+        raise HTTPException(status_code=404, detail="Post not found")
+    existing = await db.bookmarks.find_one({"post_id": post_id, "user_id": user["id"]})
+    if existing:
+        await db.bookmarks.delete_one({"post_id": post_id, "user_id": user["id"]})
+        await db.posts.update_one({"id": post_id}, {"$inc": {"bookmark_count": -1}})
+        return {"status": "removed", "is_bookmarked": False}
+    await db.bookmarks.insert_one({
+        "id": new_id(),
+        "user_id": user["id"],
+        "post_id": post_id,
+        "created_at": now().isoformat(),
+    })
+    await db.posts.update_one({"id": post_id}, {"$inc": {"bookmark_count": 1}})
+    return {"status": "added", "is_bookmarked": True}
+
+
+@api.get("/me/bookmarks")
+async def my_bookmarks(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    rows = await db.bookmarks.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    out: List[Dict[str, Any]] = []
+    for b in rows:
+        p = await db.posts.find_one({"id": b["post_id"], "status": "active"}, {"_id": 0})
+        if not p:
+            continue
+        out.append(await _hydrate_post(p, user["id"]))
+    return out
 
 
 # ---------- routes: image uploads ----------
@@ -1941,6 +1980,30 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
         })
         await ws_manager.send_to(parent_author_id, {"type": "notification"})
 
+    # notify bookmark watchers of this post (only top-level comments on real posts, not ads)
+    if not inp.parent_comment_id and not is_ad:
+        already_notified: set[str] = {user["id"], owner_id}
+        if parent_author_id:
+            already_notified.add(parent_author_id)
+        watchers = await db.bookmarks.find({"post_id": post_id}, {"_id": 0, "user_id": 1}).to_list(500)
+        for w in watchers:
+            wid = w.get("user_id")
+            if not wid or wid in already_notified:
+                continue
+            await db.notifications.insert_one({
+                "id": new_id(),
+                "user_id": wid,
+                "type": "bookmark_update",
+                "actor_alias": user["alias"],
+                "post_id": post_id,
+                "is_ad": False,
+                "content_preview": f"💬 New comment on a post you saved: {inp.content[:80] or '📷 Photo'}",
+                "created_at": now().isoformat(),
+                "read": False,
+            })
+            await ws_manager.send_to(wid, {"type": "notification"})
+            already_notified.add(wid)
+
     return {
         "id": doc["id"],
         "post_id": post_id,
@@ -2443,6 +2506,8 @@ async def on_startup() -> None:
     await db.store_items.create_index("enabled")
     await db.xp_ledger.create_index("id", unique=True)
     await db.xp_ledger.create_index([("user_id", 1), ("created_at", -1)])
+    await db.bookmarks.create_index([("post_id", 1), ("user_id", 1)], unique=True)
+    await db.bookmarks.create_index([("user_id", 1), ("created_at", -1)])
 
     # Economy migration: backfill exp / tokens / campaign budget fields
     try:

@@ -29,6 +29,7 @@ function typeMeta(t: string) {
     case "reward": return { icon: "gift-outline" as const, text: "rewarded you" };
     case "campaign_approved": return { icon: "checkmark-circle-outline" as const, text: "approved your campaign" };
     case "campaign_rejected": return { icon: "close-circle-outline" as const, text: "reviewed your campaign" };
+    case "bookmark_update": return { icon: "bookmark-outline" as const, text: "commented on a post you saved" };
     default: return { icon: "notifications-outline" as const, text: "update" };
   }
 }

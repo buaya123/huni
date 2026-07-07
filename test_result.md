@@ -272,6 +272,8 @@ agent_communication:
     message: "Fix applied: added `if item['state'] == 'depleted': continue` filter in list_active_campaigns after _hydrate_campaign call."
   - agent: "testing"
     message: "Re-test PASS 7/7. Depleted campaigns now hidden from public feed; partner still sees their depleted campaigns via /partner/campaigns/{id}; redemption on depleted campaign correctly blocked with 400. Iteration 10 backend fully verified."
+  - agent: "main"
+    message: "Bug/feature bundle: (1) QR code was using `qrcode` npm which relies on Canvas API and fails silently on native/mobile. Switched to `react-native-qrcode-svg` (with `react-native-svg`) — renders as inline SVG cross-platform. (2) User profile screen (/user/[id].tsx) now shows Lv + rank title + EXP total — /api/users/{id} already returned these via public_user(). (3) Bookmarks: new `bookmarks` collection with unique (post_id, user_id) index. Endpoints POST /api/posts/{id}/bookmark (toggle) & GET /api/me/bookmarks (list). `_hydrate_post` now returns `is_bookmarked` + `bookmark_count`. Comment-creation hook notifies all bookmarkers of a post (except commenter, post author, and parent-comment author to avoid dupes) via new notification type `bookmark_update`. PostCard has a bookmark icon in both feed and detail modes. New /bookmarks screen listed in Settings under Rewards. Notifications typeMeta updated for `bookmark_update`. Backend needs verification of the new bookmark endpoints + notification hook."
   - agent: "testing"
     message: "✅ ALL BACKEND TESTS PASSED (11/11) - Iteration 9 backend is fully functional. Tested all flows: (1) Admin promotion to partner with business info ✓, (2) Partner campaign creation with all reward types + validation ✓, (3) Admin approval/rejection with notifications ✓, (4) Public campaigns feed (only approved) ✓, (5) Partner scan with all code formats ✓, (6) Redemption flow with points, duplicate prevention (409), role guards ✓, (7) User points & history ✓, (8) Partner editing resets to pending ✓, (9) All role guards working ✓. No issues found. Backend ready for production."
   - agent: "testing"
@@ -368,8 +370,95 @@ backend:
         agent: "testing"
         comment: "✅ PASS - Tested role guards: (1) Regular user blocked from POST /admin/store/items with 403 ✓, (2) Regular user blocked from POST /partner/campaigns with 403 ✓, (3) Regular user blocked from POST /partner/scan with 403 ✓, (4) Regular user blocked from POST /partner/redeem with 403 ✓. All role guards working correctly."
 
+## Test tracking (Bookmarks + User Rank)
+
+backend:
+  - task: "GET /api/users/{id} includes rank fields"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested user rank fields: (1) GET /users/{demo2_id} as demo3 returns all required fields: exp, points, tokens, rank_level, rank_title ✓, (2) All fields have correct types (int for exp/points/tokens/rank_level, string for rank_title) ✓, (3) points === exp (legacy alias) verified ✓, (4) Rank data is sensible (Level 1, New Neighbor, 45 EXP, 0 tokens) ✓. User rank fields working correctly."
+
+  - task: "POST /api/posts/{post_id}/bookmark — toggle"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested bookmark toggle: (1) POST /bookmark as demo2 on demo3's post returns {status: 'added', is_bookmarked: true} ✓, (2) GET /posts/{id} as demo2 shows is_bookmarked=true, bookmark_count=1 ✓, (3) Same GET as demo3 (owner) shows is_bookmarked=false, bookmark_count=1 ✓, (4) POST /bookmark again returns {status: 'removed', is_bookmarked: false} ✓, (5) GET shows is_bookmarked=false, bookmark_count=0 ✓, (6) POST /bookmark on unknown_id returns 404 ✓. Bookmark toggle working correctly."
+
+  - task: "GET /api/me/bookmarks"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested my bookmarks: (1) Demo2 bookmarked 2 different posts ✓, (2) GET /me/bookmarks returns list of 2 posts ✓, (3) Posts are fully hydrated with author and is_bookmarked=true ✓, (4) Un-bookmarked one post ✓, (5) GET /me/bookmarks returns 1 post ✓. My bookmarks endpoint working correctly."
+
+  - task: "Bookmark-watcher notification on new comment"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested bookmark notification flow: (1) Demo3 created post, demo2 bookmarked it ✓, (2) Admin posted top-level comment ✓, (3) Demo2 received NEW notification with type='bookmark_update', correct post_id, actor_alias=admin's alias, content_preview starting with '💬 New comment on a post you saved:', is_ad=false ✓, (4) Admin (commenter) did NOT receive bookmark_update notification ✓, (5) Post author (demo3) received comment notification but NOT bookmark_update (avoid dupes) ✓, (6) Reply to comment (parent_comment_id set) did NOT trigger bookmark_update ✓, (7) User bookmarking their own post and commenting did NOT receive bookmark_update ✓. All bookmark notification flows working correctly."
+
+  - task: "Bookmarks on ad posts (notification suppression)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Verified bookmark notification suppression for ads: (1) Code review shows ads are stored in separate 'ads' collection, not 'posts' collection ✓, (2) Bookmark endpoint (line 1028) only checks 'posts' collection, so ads cannot be bookmarked (correct behavior) ✓, (3) Comment endpoint (lines 1977-1981) checks both 'posts' and 'ads' collections and sets is_ad flag ✓, (4) Bookmark notification logic (line 2052) has 'if not inp.parent_comment_id and not is_ad:' which correctly prevents bookmark_update notifications for ad posts ✓. Implementation is correct - ads cannot be bookmarked, and even if they could, the notification hook would not fire due to is_ad check."
+
+  - task: "Role guards (bookmark endpoints require auth)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested role guards: (1) POST /posts/{id}/bookmark without auth returns 401 ✓, (2) GET /me/bookmarks without auth returns 401 ✓, (3) GET /users/{id} without auth returns 401 ✓, (4) Any authed user can bookmark any post (verified in previous tests) ✓. All role guards working correctly."
+
+  - task: "Backward compatibility (XP awards + economy)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested backward compatibility: (1) POST /posts still awards XP (+15 verified) ✓, (2) GET /me/economy returns correct structure with exp, tokens, rank ✓. No regression in existing XP/economy flows."
+
 metadata:
-  test_sequence: 12
+  test_sequence: 13
   run_ui: false
 
 test_plan:
@@ -383,3 +472,5 @@ agent_communication:
     message: "Iteration 10 backend testing COMPLETE - 6/7 PASS, 1 ISSUE FOUND. Tested all economy flows: (1) XP awards on login/post/comment/react with daily caps ✓, (2) Rank system with /me/economy endpoint ✓, (3) Campaign budget flow (partner submit, admin approve with budgets, redemption debits) ✓, (4) ⚠️ Auto-pause/depleted state PARTIAL - depleted campaigns still appear in public feed (should be filtered out), (5) Huni Store CRUD with subcategory validation ✓, (6) Backward compatibility (/me/points, public_user) ✓, (7) Role guards ✓. ONE ISSUE: GET /campaigns endpoint does not filter out campaigns where state=depleted. The endpoint should check _campaign_status_effective() and exclude campaigns with state='depleted' from the public feed. All other flows working correctly."
   - agent: "testing"
     message: "✅ TEST #4 RETEST PASSED - Depleted campaign filtering fix verified. Main agent's fix (lines 1608-1610 in server.py: filter out campaigns where state=='depleted' after _hydrate_campaign) is working correctly. Comprehensive test completed: (1) Created campaign with exactly 1 redemption budget ✓, (2) Verified it appears in public feed when live ✓, (3) Redeemed to deplete budget (remaining_exp=0, remaining_tokens=0) ✓, (4) 🔑 KEY: New user registered and depleted campaign correctly EXCLUDED from GET /campaigns ✓, (5) Partner can still see depleted campaign with state=depleted ✓, (6) Redemption blocked with 400 ✓, (7) Non-depleted campaigns still visible ✓. All backend tests now PASSING (7/7). No further issues found."
+  - agent: "testing"
+    message: "✅ BOOKMARKS + USER RANK TESTING COMPLETE - ALL TESTS PASSED (7/7). Comprehensive testing of new bookmark and user-rank endpoints: (1) GET /users/{id} includes all rank fields (exp, points, tokens, rank_level, rank_title) with correct types ✓, (2) POST /posts/{id}/bookmark toggle works correctly (add/remove, bookmark_count updates, is_bookmarked flag) ✓, (3) GET /me/bookmarks returns fully hydrated posts ✓, (4) Bookmark-watcher notifications work correctly: top-level comments trigger notifications, replies don't, commenter/author excluded, self-bookmark excluded ✓, (5) Ad posts correctly prevent bookmark notifications (is_ad check at line 2052) ✓, (6) All endpoints require auth (401 without token) ✓, (7) Backward compatibility verified (XP awards still work) ✓. No issues found. All bookmark and rank features working as specified."

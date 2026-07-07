@@ -75,6 +75,11 @@ export default function Settings() {
             <Text style={styles.navLabel}>Huni Store</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.muted} />
           </Pressable>
+          <Pressable style={styles.navRow} onPress={() => router.push("/bookmarks")} testID="bookmarks-btn">
+            <Ionicons name="bookmark-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>Saved posts</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
           <Pressable style={styles.navRow} onPress={() => router.push("/qr")} testID="my-qr-btn">
             <Ionicons name="qr-code-outline" size={18} color={colors.brand} />
             <Text style={styles.navLabel}>My QR code</Text>

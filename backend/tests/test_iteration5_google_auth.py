@@ -20,7 +20,12 @@ import pytest
 import requests
 from pymongo import MongoClient
 
+<<<<<<< HEAD
 
+=======
+BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://huni-qr-campaigns.preview.emergentagent.com").rstrip("/")
+API = f"{BASE}/api"
+>>>>>>> feature/huni-store
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "huni_db")

@@ -12,7 +12,12 @@ import uuid
 import pytest
 import requests
 
+<<<<<<< HEAD
 
+=======
+BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://huni-qr-campaigns.preview.emergentagent.com").rstrip("/")
+API = f"{BASE}/api"
+>>>>>>> feature/huni-store
 
 
 @pytest.fixture(scope="session", autouse=True)

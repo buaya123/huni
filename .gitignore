@@ -88,4 +88,7 @@ credentials.json
 .credentials
 backend/serviceAccountKey.json
 serviceAccountKey.json
+<<<<<<< HEAD
 local.properties
+=======
+>>>>>>> feature/huni-store

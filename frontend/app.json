@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.huni.mobile",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Share photos from your gallery in posts and comments"
+        "NSPhotoLibraryUsageDescription": "Share photos from your gallery in posts and comments",
+        "NSCameraUsageDescription": "Scan QR codes to reward users with points and discounts"
       }
     },
     "android": {
@@ -24,7 +25,8 @@
       "softwareKeyboardLayoutMode": "resize",
       "package": "com.huni.mobile",
       "permissions": [
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.CAMERA"
       ]
     },
     "web": {
@@ -38,6 +40,12 @@
         "expo-image-picker",
         {
           "photosPermission": "Share photos from your gallery in posts and comments"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan QR codes to reward users with points and discounts"
         }
       ],
       [

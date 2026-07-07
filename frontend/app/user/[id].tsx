@@ -17,6 +17,11 @@ type Profile = {
   comment_count: number;
   bio: string;
   joined_at: string;
+  exp?: number;
+  points?: number;
+  tokens?: number;
+  rank_level?: number;
+  rank_title?: string;
 };
 
 export default function UserProfile() {
@@ -88,6 +93,14 @@ export default function UserProfile() {
           <Avatar alias={profile.alias} size={72} />
           <Text style={styles.alias}>{profile.alias}</Text>
           <Text style={styles.joined}>Joined {joined}</Text>
+          <View style={styles.rankRow}>
+            <View style={styles.levelPill}>
+              <Ionicons name="trophy" size={12} color="#FFFFFF" />
+              <Text style={styles.levelText}>Lv. {profile.rank_level ?? 1}</Text>
+            </View>
+            <Text style={styles.titleText}>{profile.rank_title || "New Neighbor"}</Text>
+          </View>
+          <Text style={styles.expLine}>{(profile.exp ?? profile.points ?? 0).toLocaleString()} EXP</Text>
           {!!profile.bio && <Text style={styles.bio}>{profile.bio}</Text>}
           <View style={styles.stats}>
             <View style={styles.stat}><Text style={styles.statValue}>{profile.helpful_score}</Text><Text style={styles.statLabel}>Helpful</Text></View>
@@ -128,6 +141,11 @@ const styles = StyleSheet.create({
   card: { marginHorizontal: spacing.lg, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm },
   alias: { fontSize: 20, fontWeight: "800", color: colors.onSurface, marginTop: spacing.sm },
   joined: { fontSize: font.sm, color: colors.muted },
+  rankRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 4 },
+  levelPill: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.brand, paddingHorizontal: 10, paddingVertical: 3, borderRadius: radius.pill },
+  levelText: { color: "#FFFFFF", fontWeight: "900", fontSize: font.sm },
+  titleText: { color: colors.brand, fontWeight: "800", fontSize: font.sm },
+  expLine: { color: colors.muted, fontSize: font.sm, fontWeight: "700", marginTop: 2 },
   bio: { fontSize: font.base, color: colors.onSurfaceTertiary, textAlign: "center", marginTop: spacing.sm },
   stats: { flexDirection: "row", gap: spacing.xl, marginTop: spacing.md },
   stat: { alignItems: "center" },

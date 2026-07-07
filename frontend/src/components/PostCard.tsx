@@ -30,6 +30,8 @@ export type Post = {
   pulse_votes?: number[] | null;
   my_pulse_vote?: number | null;
   images?: string[];
+  is_bookmarked?: boolean;
+  bookmark_count?: number;
 };
 
 function timeAgo(iso: string): string {
@@ -65,6 +67,17 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
     try {
       const updated = await api.post<Post>(`/posts/${post.id}/pulse-vote`, { option_index: idx });
       onChange?.(updated);
+    } catch { /* ignore */ }
+  };
+
+  const toggleBookmark = async () => {
+    try {
+      const r = await api.post<{ is_bookmarked: boolean }>(`/posts/${post.id}/bookmark`);
+      onChange?.({
+        ...post,
+        is_bookmarked: r.is_bookmarked,
+        bookmark_count: (post.bookmark_count ?? 0) + (r.is_bookmarked ? 1 : -1),
+      });
     } catch { /* ignore */ }
   };
 
@@ -160,9 +173,14 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
               </View>
             )}
           </View>
-          <View style={styles.commentPill}>
-            <Ionicons name="chatbubble-outline" size={14} color={colors.onSurfaceTertiary} />
-            <Text style={styles.commentCount}>{post.comment_count}</Text>
+          <View style={styles.footerRightGroup}>
+            <Pressable onPress={(e) => { e.stopPropagation(); toggleBookmark(); }} style={styles.iconBtn} testID={`bookmark-btn-${post.id}`} hitSlop={6}>
+              <Ionicons name={post.is_bookmarked ? "bookmark" : "bookmark-outline"} size={16} color={post.is_bookmarked ? colors.brand : colors.onSurfaceTertiary} />
+            </Pressable>
+            <View style={styles.commentPill}>
+              <Ionicons name="chatbubble-outline" size={14} color={colors.onSurfaceTertiary} />
+              <Text style={styles.commentCount}>{post.comment_count}</Text>
+            </View>
           </View>
         </View>
       ) : (
@@ -185,9 +203,17 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
               );
             })}
           </View>
-          <View style={styles.commentPill}>
-            <Ionicons name="chatbubble-outline" size={14} color={colors.onSurfaceTertiary} />
-            <Text style={styles.commentCount}>{post.comment_count}</Text>
+          <View style={styles.footerRightGroup}>
+            <Pressable onPress={toggleBookmark} style={[styles.iconBtn, post.is_bookmarked && styles.iconBtnActive]} testID={`bookmark-btn-${post.id}`} hitSlop={6}>
+              <Ionicons name={post.is_bookmarked ? "bookmark" : "bookmark-outline"} size={18} color={post.is_bookmarked ? colors.brand : colors.onSurfaceTertiary} />
+              {(post.bookmark_count ?? 0) > 0 && (
+                <Text style={[styles.commentCount, post.is_bookmarked && { color: colors.brand }]}>{post.bookmark_count}</Text>
+              )}
+            </Pressable>
+            <View style={styles.commentPill}>
+              <Ionicons name="chatbubble-outline" size={14} color={colors.onSurfaceTertiary} />
+              <Text style={styles.commentCount}>{post.comment_count}</Text>
+            </View>
           </View>
         </View>
       )}
@@ -256,6 +282,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   commentCount: { fontSize: font.sm, color: colors.onSurfaceTertiary, fontWeight: "600" },
+  footerRightGroup: { flexDirection: "row", alignItems: "center", gap: 6 },
+  iconBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
+  iconBtnActive: { backgroundColor: colors.brandTertiary },
 
   pulseWrap: { marginBottom: spacing.md, gap: spacing.sm },
   pulseOption: {

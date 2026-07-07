@@ -1605,6 +1605,9 @@ async def list_active_campaigns(user: Dict[str, Any] = Depends(get_current_user)
             if p:
                 partners_cache[c["partner_id"]] = p
         item = _hydrate_campaign(c, p)
+        # Hide depleted (budget-out) campaigns from the public feed
+        if item["state"] == "depleted":
+            continue
         already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": user["id"]})
         item["already_redeemed"] = bool(already)
         out.append(item)

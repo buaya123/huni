@@ -313,7 +313,7 @@ backend:
   
   - task: "Auto-pause / depleted state"
     implemented: true
-    working: false
+    working: true
     file: "backend/server.py"
     stuck_count: 0
     priority: "high"
@@ -322,6 +322,9 @@ backend:
       - working: false
         agent: "testing"
         comment: "⚠️ PARTIAL - Tested auto-pause/depleted: (1) Campaign with budget for 1 redemption created and approved ✓, (2) Redemption successful, budget depleted ✓, (3) Campaign state correctly shows 'depleted' (remaining_exp=0, remaining_tokens=0) ✓, (4) ❌ ISSUE: Depleted campaign still appears in public feed GET /campaigns (should be filtered out) - the endpoint only filters by status=approved and enabled=True, but does not filter by computed state. The campaign correctly shows state=depleted in the response, but should not appear at all. (5) Redemption attempt on depleted campaign correctly blocked with 400 ✓. FIX NEEDED: GET /campaigns endpoint should filter out campaigns where _campaign_status_effective() returns 'depleted'."
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - RETEST SUCCESSFUL after fix. Verified depleted campaign filtering: (1) Partner created campaign 'Small budget test' with minimal budget (exp_per=100, tokens_per=100, budget_exp=100, budget_tokens=100) for exactly 1 redemption ✓, (2) Admin approved, campaign appeared in public feed with state=live ✓, (3) Partner redeemed for demo3, budget depleted to 0/0 ✓, (4) 🔑 KEY FIX VERIFIED: New user registered and GET /campaigns correctly EXCLUDED the depleted campaign from public feed ✓, (5) Partner can still view their depleted campaign via GET /partner/campaigns/{id} with state=depleted ✓, (6) Redemption attempt on depleted campaign correctly blocked with 400 'Campaign EXP budget depleted' ✓, (7) Smoke test: Non-depleted campaigns still appear in feed ✓. Fix working correctly: lines 1608-1610 in list_active_campaigns now filter out campaigns where item['state'] == 'depleted' after _hydrate_campaign."
   
   - task: "Huni Store CRUD (admin endpoints + public browse + subcategory validation)"
     implemented: true
@@ -360,12 +363,11 @@ backend:
         comment: "✅ PASS - Tested role guards: (1) Regular user blocked from POST /admin/store/items with 403 ✓, (2) Regular user blocked from POST /partner/campaigns with 403 ✓, (3) Regular user blocked from POST /partner/scan with 403 ✓, (4) Regular user blocked from POST /partner/redeem with 403 ✓. All role guards working correctly."
 
 metadata:
-  test_sequence: 11
+  test_sequence: 12
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Fix: GET /campaigns should filter out depleted campaigns"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -373,3 +375,5 @@ test_plan:
 agent_communication:
   - agent: "testing"
     message: "Iteration 10 backend testing COMPLETE - 6/7 PASS, 1 ISSUE FOUND. Tested all economy flows: (1) XP awards on login/post/comment/react with daily caps ✓, (2) Rank system with /me/economy endpoint ✓, (3) Campaign budget flow (partner submit, admin approve with budgets, redemption debits) ✓, (4) ⚠️ Auto-pause/depleted state PARTIAL - depleted campaigns still appear in public feed (should be filtered out), (5) Huni Store CRUD with subcategory validation ✓, (6) Backward compatibility (/me/points, public_user) ✓, (7) Role guards ✓. ONE ISSUE: GET /campaigns endpoint does not filter out campaigns where state=depleted. The endpoint should check _campaign_status_effective() and exclude campaigns with state='depleted' from the public feed. All other flows working correctly."
+  - agent: "testing"
+    message: "✅ TEST #4 RETEST PASSED - Depleted campaign filtering fix verified. Main agent's fix (lines 1608-1610 in server.py: filter out campaigns where state=='depleted' after _hydrate_campaign) is working correctly. Comprehensive test completed: (1) Created campaign with exactly 1 redemption budget ✓, (2) Verified it appears in public feed when live ✓, (3) Redeemed to deplete budget (remaining_exp=0, remaining_tokens=0) ✓, (4) 🔑 KEY: New user registered and depleted campaign correctly EXCLUDED from GET /campaigns ✓, (5) Partner can still see depleted campaign with state=depleted ✓, (6) Redemption blocked with 400 ✓, (7) Non-depleted campaigns still visible ✓. All backend tests now PASSING (7/7). No further issues found."

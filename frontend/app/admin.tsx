@@ -20,11 +20,12 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
-function rewardSummary(c: { reward_type: string; points_amount: number; discount_label: string }): string {
+function rewardSummary(c: { exp_per_redemption?: number; tokens_per_redemption?: number; discount_label?: string }): string {
   const parts: string[] = [];
-  if (c.reward_type === "points" || c.reward_type === "both") parts.push(`+${c.points_amount} points`);
-  if (c.reward_type === "discount" || c.reward_type === "both") parts.push(c.discount_label || "discount");
-  return parts.join(" · ");
+  if ((c.exp_per_redemption ?? 0) > 0) parts.push(`+${c.exp_per_redemption} EXP`);
+  if ((c.tokens_per_redemption ?? 0) > 0) parts.push(`+${c.tokens_per_redemption} tokens`);
+  if (c.discount_label) parts.push(c.discount_label);
+  return parts.length > 0 ? parts.join(" · ") : "Not set (pending approval)";
 }
 
 function ReviewField({ label, value, error }: { label: string; value: string; error?: boolean }) {
@@ -59,8 +60,6 @@ type AdminCampaign = {
   id: string;
   title: string;
   description: string;
-  reward_type: "points" | "discount" | "both";
-  points_amount: number;
   discount_label: string;
   terms?: string;
   start_date?: string | null;
@@ -68,8 +67,17 @@ type AdminCampaign = {
   status: string;
   state: string;
   redemption_count: number;
+  exp_per_redemption: number;
+  tokens_per_redemption: number;
+  budget_exp: number;
+  budget_tokens: number;
+  remaining_exp: number;
+  remaining_tokens: number;
   created_at?: string;
   rejected_reason?: string | null;
+  // Legacy (still in API for backwards compat but unused)
+  reward_type?: string;
+  points_amount?: number;
   partner: { id: string; alias: string; business_name: string; business_type: string } | null;
 };
 
@@ -86,6 +94,12 @@ export default function AdminPanel() {
   const [reviewCampaign, setReviewCampaign] = useState<AdminCampaign | null>(null);
   const [rejectReason, setRejectReason] = useState<string>("");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [approving, setApproving] = useState<AdminCampaign | null>(null);
+  const [approvalExpPer, setApprovalExpPer] = useState<string>("25");
+  const [approvalTokPer, setApprovalTokPer] = useState<string>("50");
+  const [approvalExpBudget, setApprovalExpBudget] = useState<string>("2500");
+  const [approvalTokBudget, setApprovalTokBudget] = useState<string>("5000");
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
 
   const isAdmin = user?.role === "admin";
 
@@ -142,13 +156,47 @@ export default function AdminPanel() {
     } catch { /* ignore */ }
   };
 
-  const approveCampaign = async (c: AdminCampaign) => {
+  const openApproveFlow = (c: AdminCampaign) => {
+    setApprovalExpPer("25");
+    setApprovalTokPer("50");
+    setApprovalExpBudget("2500");
+    setApprovalTokBudget("5000");
+    setApproving(c);
+  };
+
+  const submitApproval = async () => {
+    if (!approving) return;
+    const expPer = parseInt(approvalExpPer || "0", 10) || 0;
+    const tokPer = parseInt(approvalTokPer || "0", 10) || 0;
+    const expBudget = parseInt(approvalExpBudget || "0", 10) || 0;
+    const tokBudget = parseInt(approvalTokBudget || "0", 10) || 0;
+    if (expPer > 0 && expBudget < expPer) { Alert.alert("Invalid", "EXP budget must be at least the per-person EXP amount."); return; }
+    if (tokPer > 0 && tokBudget < tokPer) { Alert.alert("Invalid", "Token budget must be at least the per-person token amount."); return; }
+    setApprovalSubmitting(true);
     try {
-      await api.post(`/admin/campaigns/${c.id}/approve`);
-      setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "approved", state: "live" } : x)));
-      setReviewCampaign((r) => (r && r.id === c.id ? { ...r, status: "approved", state: "live" } : r));
+      await api.post(`/admin/campaigns/${approving.id}/approve`, {
+        exp_per_redemption: expPer,
+        tokens_per_redemption: tokPer,
+        budget_exp: expBudget,
+        budget_tokens: tokBudget,
+      });
+      setCampaigns((prev) => prev.map((x) => (x.id === approving.id ? {
+        ...x,
+        status: "approved",
+        state: "live",
+        exp_per_redemption: expPer,
+        tokens_per_redemption: tokPer,
+        budget_exp: expBudget,
+        budget_tokens: tokBudget,
+        remaining_exp: expBudget,
+        remaining_tokens: tokBudget,
+      } : x)));
+      setApproving(null);
+      setReviewCampaign(null);
     } catch (e) {
       Alert.alert("Error", e instanceof Error ? e.message : "Could not approve");
+    } finally {
+      setApprovalSubmitting(false);
     }
   };
 
@@ -281,9 +329,7 @@ export default function AdminPanel() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.userAlias} numberOfLines={2}>{c.title}</Text>
                 <Text style={styles.userEmail} numberOfLines={1}>
-                  {c.partner?.business_name ?? c.partner?.alias ?? "?"} · {c.reward_type}
-                  {(c.reward_type === "points" || c.reward_type === "both") && ` · +${c.points_amount}pts`}
-                  {(c.reward_type === "discount" || c.reward_type === "both") && ` · ${c.discount_label}`}
+                  {c.partner?.business_name ?? c.partner?.alias ?? "?"} · {rewardSummary(c)}
                 </Text>
                 <Text style={styles.userEmail} numberOfLines={2}>{c.description}</Text>
                 {c.status === "rejected" && !!c.rejected_reason && (
@@ -296,7 +342,7 @@ export default function AdminPanel() {
               </View>
               {c.status === "pending" ? (
                 <View style={{ gap: 4 }}>
-                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.success }]} onPress={() => approveCampaign(c)} testID={`approve-${c.id}`}>
+                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.success }]} onPress={() => openApproveFlow(c)} testID={`approve-${c.id}`}>
                     <Text style={styles.promoteText}>Approve</Text>
                   </Pressable>
                   <Pressable style={[styles.promoteBtn, { backgroundColor: colors.error }]} onPress={() => { setRejectingId(c.id); setRejectReason(""); }} testID={`reject-${c.id}`}>
@@ -364,13 +410,38 @@ export default function AdminPanel() {
                     </View>
                   </View>
 
-                  <ReviewField label="Reward" value={rewardSummary(reviewCampaign)} />
                   <ReviewField label="Description" value={reviewCampaign.description} />
+                  {!!reviewCampaign.discount_label && (
+                    <ReviewField label="In-store discount" value={reviewCampaign.discount_label} />
+                  )}
                   {!!reviewCampaign.terms && <ReviewField label="Terms" value={reviewCampaign.terms} />}
                   <View style={{ flexDirection: "row", gap: spacing.sm }}>
                     <View style={{ flex: 1 }}><ReviewField label="Start" value={reviewCampaign.start_date || "—"} /></View>
                     <View style={{ flex: 1 }}><ReviewField label="End" value={reviewCampaign.end_date || "—"} /></View>
                   </View>
+                  {reviewCampaign.status === "approved" && (
+                    <View style={styles.reviewBudget}>
+                      <Text style={styles.fieldLabel}>Reward allocation</Text>
+                      <View style={styles.rewardStatsRow}>
+                        <View style={styles.rewardStat}>
+                          <Text style={styles.rewardStatValue}>+{reviewCampaign.exp_per_redemption} EXP</Text>
+                          <Text style={styles.rewardStatLabel}>per person</Text>
+                        </View>
+                        <View style={styles.rewardStat}>
+                          <Text style={styles.rewardStatValue}>+{reviewCampaign.tokens_per_redemption} tk</Text>
+                          <Text style={styles.rewardStatLabel}>per person</Text>
+                        </View>
+                        <View style={styles.rewardStat}>
+                          <Text style={styles.rewardStatValue}>{reviewCampaign.remaining_exp}/{reviewCampaign.budget_exp}</Text>
+                          <Text style={styles.rewardStatLabel}>EXP left</Text>
+                        </View>
+                        <View style={styles.rewardStat}>
+                          <Text style={styles.rewardStatValue}>{reviewCampaign.remaining_tokens}/{reviewCampaign.budget_tokens}</Text>
+                          <Text style={styles.rewardStatLabel}>tokens left</Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
                   <ReviewField label="Redemptions so far" value={String(reviewCampaign.redemption_count)} />
                   {reviewCampaign.status === "rejected" && !!reviewCampaign.rejected_reason && (
                     <ReviewField label="Previous rejection reason" value={reviewCampaign.rejected_reason} error />
@@ -383,7 +454,7 @@ export default function AdminPanel() {
                 <Pressable style={[styles.promoteBtn, styles.demoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center" }]} onPress={() => { const c = reviewCampaign; setReviewCampaign(null); setRejectingId(c.id); setRejectReason(""); }} testID="review-reject">
                   <Text style={[styles.promoteText, { color: colors.error }]}>Reject</Text>
                 </Pressable>
-                <Pressable style={[styles.promoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center", backgroundColor: colors.success }]} onPress={() => reviewCampaign && approveCampaign(reviewCampaign)} testID="review-approve">
+                <Pressable style={[styles.promoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center", backgroundColor: colors.success }]} onPress={() => reviewCampaign && openApproveFlow(reviewCampaign)} testID="review-approve">
                   <Text style={styles.promoteText}>Approve</Text>
                 </Pressable>
               </View>
@@ -394,6 +465,69 @@ export default function AdminPanel() {
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* Approval-with-budget modal */}
+      <Modal transparent visible={!!approving} animationType="slide" onRequestClose={() => setApproving(null)}>
+        <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.approveCard}>
+            <View style={styles.reviewHead}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Approve & allocate</Text>
+                <Text style={{ color: colors.muted, fontSize: font.sm }} numberOfLines={1}>{approving?.title}</Text>
+              </View>
+              <Pressable onPress={() => setApproving(null)} hitSlop={12}><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>
+            </View>
+            <ScrollView contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.sm }} keyboardShouldPersistTaps="handled">
+              <Text style={{ color: colors.muted, fontSize: font.sm }}>
+                Set the per-person EXP & Token allocation and the total budget for this campaign package.
+              </Text>
+              <View style={styles.allocSection}>
+                <Text style={styles.allocSectionTitle}>EXP allocation</Text>
+                <View style={{ flexDirection: "row", gap: spacing.md }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Per person</Text>
+                    <TextInput style={styles.input} value={approvalExpPer} onChangeText={(v) => setApprovalExpPer(v.replace(/[^0-9]/g, ""))} keyboardType="number-pad" placeholder="25" placeholderTextColor={colors.muted} testID="approve-exp-per" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Total EXP budget</Text>
+                    <TextInput style={styles.input} value={approvalExpBudget} onChangeText={(v) => setApprovalExpBudget(v.replace(/[^0-9]/g, ""))} keyboardType="number-pad" placeholder="2500" placeholderTextColor={colors.muted} testID="approve-exp-budget" />
+                  </View>
+                </View>
+              </View>
+              <View style={styles.allocSection}>
+                <Text style={styles.allocSectionTitle}>Token allocation</Text>
+                <View style={{ flexDirection: "row", gap: spacing.md }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Per person</Text>
+                    <TextInput style={styles.input} value={approvalTokPer} onChangeText={(v) => setApprovalTokPer(v.replace(/[^0-9]/g, ""))} keyboardType="number-pad" placeholder="50" placeholderTextColor={colors.muted} testID="approve-tok-per" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Total token budget</Text>
+                    <TextInput style={styles.input} value={approvalTokBudget} onChangeText={(v) => setApprovalTokBudget(v.replace(/[^0-9]/g, ""))} keyboardType="number-pad" placeholder="5000" placeholderTextColor={colors.muted} testID="approve-tok-budget" />
+                  </View>
+                </View>
+              </View>
+              <View style={styles.calcRow}>
+                <Ionicons name="calculator-outline" size={14} color={colors.muted} />
+                <Text style={styles.calcText}>
+                  Fits ~{Math.min(
+                    parseInt(approvalExpPer || "0", 10) > 0 ? Math.floor((parseInt(approvalExpBudget || "0", 10) || 0) / Math.max(1, parseInt(approvalExpPer || "0", 10))) : 999999,
+                    parseInt(approvalTokPer || "0", 10) > 0 ? Math.floor((parseInt(approvalTokBudget || "0", 10) || 0) / Math.max(1, parseInt(approvalTokPer || "0", 10))) : 999999,
+                  ).toLocaleString()} redemptions
+                </Text>
+              </View>
+            </ScrollView>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable style={[styles.promoteBtn, styles.demoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center" }]} onPress={() => setApproving(null)}>
+                <Text style={styles.promoteText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.promoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center", backgroundColor: colors.success }]} onPress={submitApproval} disabled={approvalSubmitting} testID="submit-approval">
+                {approvalSubmitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.promoteText}>Approve & go live</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Reject reason modal (cross-platform, replaces Alert.prompt) */}
@@ -519,4 +653,14 @@ const styles = StyleSheet.create({
   fieldValue: { color: colors.onSurface, fontSize: font.base, lineHeight: 20 },
   reviewCTA: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
   reviewCTAText: { color: colors.brand, fontSize: 11, fontWeight: "700" },
+  approveCard: { width: "100%", backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md, maxHeight: "92%" },
+  allocSection: { backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
+  allocSectionTitle: { fontWeight: "900", color: colors.onSurface },
+  calcRow: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", backgroundColor: colors.brandTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
+  calcText: { color: colors.onBrandTertiary, fontWeight: "700", fontSize: font.sm },
+  reviewBudget: { gap: 4 },
+  rewardStatsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  rewardStat: { flex: 1, minWidth: 80, backgroundColor: colors.brandTertiary, padding: spacing.sm, borderRadius: radius.sm, alignItems: "center" },
+  rewardStatValue: { fontWeight: "900", color: colors.onBrandTertiary, fontSize: font.sm },
+  rewardStatLabel: { color: colors.onBrandTertiary, opacity: 0.75, fontSize: 10 },
 });

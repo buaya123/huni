@@ -242,16 +242,15 @@ frontend:
         comment: "Users list now supports Partner promotion (with business_name/type modal). New Campaign approvals section with Approve/Reject buttons."
 
 metadata:
-  test_sequence: 9
+  test_sequence: 10
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Partner role + admin promotion with business info"
-    - "Campaign CRUD + status flow (partner)"
-    - "Admin campaign approval + rejection"
-    - "Partner QR scan + redeem (1-per-user-per-campaign)"
-    - "User-facing perks + points + redemption history"
+    - "EXP + Tokens economy: rank_for_exp, /me/economy, XP awards on login/post/comment/react"
+    - "Campaign refactor: partner submits offer only, admin approval sets budget + per-person"
+    - "Redeem debits budgets + credits EXP/Tokens; auto-pauses when depleted"
+    - "Huni Store: admin CRUD + public browse + subcategory validation"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -265,7 +264,112 @@ agent_communication:
     message: "Bug fixes: (1) Notification handler didn't route campaign_id — added handling for reward → /rewards, campaign_approved|rejected → /partner. Added meta icons for new types. (2) Admin campaign rows were truncated with no review path — made rows Pressable, added full-detail review modal (partner info, reward, full description, terms, dates, redemption count, previous reject reason) with Approve/Reject inline, plus a cross-platform reject-reason modal (replaces iOS-only Alert.prompt). Frontend testing agent confirmed both fixes PASS."
   - agent: "testing"
     message: "Bug fixes for Iteration 9 verified PASS: notification → /partner routing works, campaign approval visible in hub with correct status. Admin review modal shows full untruncated details, cross-platform reject reason modal works, rejection reason persists in list + reopens correctly with 'Previous rejection reason' shown in red."
+  - agent: "main"
+    message: "Iteration 10 — Economy overhaul. Renamed points → EXP (permanent, rank-only); added `tokens` (spendable). New rank system with 10 named titles + 15% growth after Lv 10, computed by `rank_for_exp()`. New XP triggers: daily_login (+5 once/day via /auth/login), create_post (+15) + first_post_bonus (+10 once/day), comment (+8, cap 5/day), react (+1, cap 20/day, positive add only, non-self). Campaign flow refactored: partner submits offer only (no reward inputs); admin approval takes `exp_per_redemption`, `tokens_per_redemption`, `budget_exp`, `budget_tokens`. Redemption debits budgets + credits user; auto-pauses when budget can't fund next redemption (`state=depleted`). New Huni Store: `store_items` collection with full admin CRUD (POST/GET/PATCH/DELETE /admin/store/items), public GET /store/items with active-date filter, GET /store/categories returning the category tree. New endpoint /me/economy returns exp + tokens + rank + progress. Data migration on startup copies points→exp, adds tokens=0, backfills campaign budget fields. Frontend: new /huni-guide (about screen), /store (browse + coming-soon buy), /admin/store (CRUD), simplified partner campaign create (no reward inputs), admin approval budget modal with 4 fields, rewards screen shows rank progress bar + tokens card + EXP/tokens per redemption, profile shows Lv+EXP pill + tokens pill + rank title. Settings has links to Store + Guide + Admin Store Manager. Backend verified via curl (seed+economy+categories+store item CRUD). Please test the new economy backend endpoints comprehensively."
   - agent: "testing"
     message: "✅ ALL BACKEND TESTS PASSED (11/11) - Iteration 9 backend is fully functional. Tested all flows: (1) Admin promotion to partner with business info ✓, (2) Partner campaign creation with all reward types + validation ✓, (3) Admin approval/rejection with notifications ✓, (4) Public campaigns feed (only approved) ✓, (5) Partner scan with all code formats ✓, (6) Redemption flow with points, duplicate prevention (409), role guards ✓, (7) User points & history ✓, (8) Partner editing resets to pending ✓, (9) All role guards working ✓. No issues found. Backend ready for production."
   - agent: "testing"
     message: "✅ BUG FIX TESTING COMPLETE (2/2 PASS) - Tested 2 bug fixes: (1) Partner notification routes to Partner Hub (/partner) when tapping campaign_approved notification ✓, (2) Admin can review full campaign details in modal (not truncated) + reject with custom reason (cross-platform TextInput, not iOS Alert.prompt) + rejection reason persists in both list and modal ✓. All bug fixes verified and working correctly."
+
+
+## Test tracking (Iteration 10)
+
+backend:
+  - task: "XP awards on user actions (daily_login, create_post, comment, react)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested XP award system: (1) Daily login awards +5 XP once per day ✓, (2) Second login same day does not award XP (daily cap working) ✓, (3) Create post awards +15 XP + first_post_bonus +10 XP once per day ✓, (4) Second post awards only +15 XP ✓, (5) Comment awards +8 XP with cap of 5/day ✓, (6) React on other user's post awards +1 XP with cap of 20/day ✓, (7) Toggle off reaction does not award XP ✓, (8) Self-react does not award XP ✓. All XP award flows working correctly with proper daily caps."
+  
+  - task: "Rank system (rank_for_exp, /me/economy endpoint)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested rank helper: (1) /me/economy returns complete rank structure with level, title, exp, exp_current_level, exp_next_level, progress_percent ✓, (2) Rank calculations are coherent (level >= 1, progress 0-100%, exp in expected range) ✓, (3) Rank titles are valid (New Neighbor, Resident, Regular, etc.) ✓. Rank system working correctly."
+  
+  - task: "Campaign budget flow (partner submit, admin approve with budgets, redemption debits)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested campaign budget flow: (1) Partner creates campaign without reward fields, status=pending, all budgets=0 ✓, (2) Admin approves with exp_per=25, tokens_per=50, budget_exp=500, budget_tokens=1000, status=approved, state=live ✓, (3) Validation: budget_exp < exp_per_redemption rejected with 422 ✓, (4) Validation: budget_tokens < tokens_per_redemption rejected with 422 ✓, (5) Partner scan shows campaign with correct rewards ✓, (6) Redemption credits user +25 EXP, +50 tokens ✓, (7) User economy updated correctly ✓, (8) Campaign budgets debited (remaining_exp=475, remaining_tokens=950) ✓, (9) Redemption appears in user's history ✓. All budget flows working correctly."
+  
+  - task: "Auto-pause / depleted state"
+    implemented: true
+    working: false
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: "⚠️ PARTIAL - Tested auto-pause/depleted: (1) Campaign with budget for 1 redemption created and approved ✓, (2) Redemption successful, budget depleted ✓, (3) Campaign state correctly shows 'depleted' (remaining_exp=0, remaining_tokens=0) ✓, (4) ❌ ISSUE: Depleted campaign still appears in public feed GET /campaigns (should be filtered out) - the endpoint only filters by status=approved and enabled=True, but does not filter by computed state. The campaign correctly shows state=depleted in the response, but should not appear at all. (5) Redemption attempt on depleted campaign correctly blocked with 400 ✓. FIX NEEDED: GET /campaigns endpoint should filter out campaigns where _campaign_status_effective() returns 'depleted'."
+  
+  - task: "Huni Store CRUD (admin endpoints + public browse + subcategory validation)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested Huni Store: (1) GET /store/categories returns correct structure with 4 categories (appearance, seasonal, events, collections) and all subcategories ✓, (2) Admin creates store item successfully ✓, (3) Wrong subcategory validation rejected with 422 ✓, (4) Non-admin blocked from creating items with 403 ✓, (5) Admin GET /admin/store/items returns all items ✓, (6) Admin GET single item works ✓, (7) Admin PATCH updates item (price, enabled) ✓, (8) Wrong subcategory in PATCH rejected with 422 ✓, (9) Public GET /store/items does not show disabled items ✓, (10) Category filter works correctly ✓, (11) Admin DELETE removes item ✓, (12) Deleted item returns 404 ✓. All store CRUD operations working correctly."
+  
+  - task: "Backward compatibility (/me/points legacy alias, public_user fields)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested backward compatibility: (1) GET /me/points (legacy alias) returns points, exp, tokens, redemptions, rank ✓, (2) points === exp verified ✓, (3) GET /auth/me (public_user) includes points, exp, tokens, rank_level, rank_title ✓, (4) points === exp in public_user verified ✓. All backward compatibility working correctly."
+  
+  - task: "Role guards (admin/partner/user permissions)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested role guards: (1) Regular user blocked from POST /admin/store/items with 403 ✓, (2) Regular user blocked from POST /partner/campaigns with 403 ✓, (3) Regular user blocked from POST /partner/scan with 403 ✓, (4) Regular user blocked from POST /partner/redeem with 403 ✓. All role guards working correctly."
+
+metadata:
+  test_sequence: 11
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Fix: GET /campaigns should filter out depleted campaigns"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "testing"
+    message: "Iteration 10 backend testing COMPLETE - 6/7 PASS, 1 ISSUE FOUND. Tested all economy flows: (1) XP awards on login/post/comment/react with daily caps ✓, (2) Rank system with /me/economy endpoint ✓, (3) Campaign budget flow (partner submit, admin approve with budgets, redemption debits) ✓, (4) ⚠️ Auto-pause/depleted state PARTIAL - depleted campaigns still appear in public feed (should be filtered out), (5) Huni Store CRUD with subcategory validation ✓, (6) Backward compatibility (/me/points, public_user) ✓, (7) Role guards ✓. ONE ISSUE: GET /campaigns endpoint does not filter out campaigns where state=depleted. The endpoint should check _campaign_status_effective() and exclude campaigns with state='depleted' from the public feed. All other flows working correctly."

@@ -61,8 +61,8 @@ export default function Settings() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Rewards</Text>
           <Pressable style={styles.navRow} onPress={() => router.push("/rewards")} testID="rewards-btn">
-            <Ionicons name="gift-outline" size={18} color={colors.brand} />
-            <Text style={styles.navLabel}>My rewards & history</Text>
+            <Ionicons name="trophy-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>My rewards, EXP & tokens</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.muted} />
           </Pressable>
           <Pressable style={styles.navRow} onPress={() => router.push("/perks")} testID="perks-btn">
@@ -70,9 +70,19 @@ export default function Settings() {
             <Text style={styles.navLabel}>Browse local perks</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.muted} />
           </Pressable>
+          <Pressable style={styles.navRow} onPress={() => router.push("/store")} testID="store-btn">
+            <Ionicons name="storefront-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>Huni Store</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
           <Pressable style={styles.navRow} onPress={() => router.push("/qr")} testID="my-qr-btn">
             <Ionicons name="qr-code-outline" size={18} color={colors.brand} />
             <Text style={styles.navLabel}>My QR code</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
+          <Pressable style={styles.navRow} onPress={() => router.push("/huni-guide")} testID="guide-btn">
+            <Ionicons name="information-circle-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>How Huni works</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.muted} />
           </Pressable>
         </View>
@@ -102,11 +112,18 @@ export default function Settings() {
               <Ionicons name="chevron-forward" size={16} color={colors.muted} />
             </Pressable>
             {user?.role === "admin" && (
-              <Pressable style={styles.navRow} onPress={() => router.push("/admin")} testID="admin-panel-btn">
-                <Ionicons name="shield-checkmark-outline" size={18} color={colors.brand} />
-                <Text style={styles.navLabel}>Admin Panel</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.muted} />
-              </Pressable>
+              <>
+                <Pressable style={styles.navRow} onPress={() => router.push("/admin")} testID="admin-panel-btn">
+                  <Ionicons name="shield-checkmark-outline" size={18} color={colors.brand} />
+                  <Text style={styles.navLabel}>Admin Panel</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+                </Pressable>
+                <Pressable style={styles.navRow} onPress={() => router.push("/admin/store")} testID="admin-store-btn">
+                  <Ionicons name="storefront-outline" size={18} color={colors.brand} />
+                  <Text style={styles.navLabel}>Store Manager</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+                </Pressable>
+              </>
             )}
           </View>
         )}

@@ -37,11 +37,17 @@ export default function PerkDetail() {
           <View style={styles.rewardCard}>
             <Ionicons name="gift" size={20} color={colors.onBrandTertiary} />
             <View style={{ flex: 1 }}>
-              {(c.reward_type === "points" || c.reward_type === "both") && (
-                <Text style={styles.rewardLine}>Earn <Text style={{ fontWeight: "900" }}>+{c.points_amount} Huni points</Text></Text>
+              {c.exp_per_redemption > 0 && (
+                <Text style={styles.rewardLine}>Earn <Text style={{ fontWeight: "900" }}>+{c.exp_per_redemption} EXP</Text></Text>
               )}
-              {(c.reward_type === "discount" || c.reward_type === "both") && (
-                <Text style={styles.rewardLine}><Text style={{ fontWeight: "900" }}>{c.discount_label}</Text></Text>
+              {c.tokens_per_redemption > 0 && (
+                <Text style={styles.rewardLine}>Get <Text style={{ fontWeight: "900" }}>+{c.tokens_per_redemption} Huni tokens</Text></Text>
+              )}
+              {!!c.discount_label && (
+                <Text style={styles.rewardLine}><Text style={{ fontWeight: "900" }}>{c.discount_label}</Text> in-store</Text>
+              )}
+              {c.exp_per_redemption === 0 && c.tokens_per_redemption === 0 && !c.discount_label && (
+                <Text style={styles.rewardLine}>In-store perk</Text>
               )}
             </View>
           </View>

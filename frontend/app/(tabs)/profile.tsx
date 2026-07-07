@@ -107,14 +107,17 @@ export default function Profile() {
 
           <View style={styles.rewardsRow}>
             <Pressable style={styles.rewardsPill} onPress={() => router.push("/rewards")} testID="rewards-pill">
-              <Ionicons name="sparkles" size={14} color={colors.onBrandTertiary} />
-              <Text style={styles.rewardsText}>{user.points ?? 0} pts</Text>
+              <Ionicons name="trophy" size={14} color={colors.onBrandTertiary} />
+              <Text style={styles.rewardsText}>Lv. {user.rank_level ?? 1} · {(user.exp ?? user.points ?? 0).toLocaleString()} EXP</Text>
             </Pressable>
-            <Pressable style={styles.perksPill} onPress={() => router.push("/perks")} testID="perks-pill">
-              <Ionicons name="pricetags-outline" size={14} color={colors.brand} />
-              <Text style={styles.perksText}>Perks</Text>
+            <Pressable style={styles.perksPill} onPress={() => router.push("/store")} testID="tokens-pill">
+              <Ionicons name="cash-outline" size={14} color={colors.brand} />
+              <Text style={styles.perksText}>{(user.tokens ?? 0).toLocaleString()} tokens</Text>
             </Pressable>
           </View>
+          {!!user.rank_title && (
+            <Text style={styles.rankTitleLabel}>{user.rank_title}</Text>
+          )}
 
           {editingBio ? (
             <View style={{ width: "100%", gap: spacing.sm }}>
@@ -268,6 +271,7 @@ const styles = StyleSheet.create({
   rewardsText: { color: colors.onBrandTertiary, fontWeight: "800", fontSize: font.sm },
   perksPill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
   perksText: { color: colors.brand, fontWeight: "800", fontSize: font.sm },
+  rankTitleLabel: { marginTop: 4, color: colors.brand, fontWeight: "800", fontSize: font.sm, textAlign: "center" },
   smallBtn: {
     backgroundColor: colors.brand, borderRadius: radius.pill,
     paddingHorizontal: spacing.lg, paddingVertical: 8,

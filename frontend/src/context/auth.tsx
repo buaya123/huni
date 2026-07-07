@@ -18,7 +18,11 @@ export type User = {
   picture?: string;
   auth_provider?: "password" | "google";
   role?: "user" | "advertiser" | "partner" | "admin";
-  points?: number;
+  points?: number;  // legacy alias for exp
+  exp?: number;
+  tokens?: number;
+  rank_level?: number;
+  rank_title?: string;
   business_name?: string;
   business_type?: string;
 };

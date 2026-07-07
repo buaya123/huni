@@ -14,7 +14,7 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import jwt
@@ -275,9 +275,7 @@ class RoleUpdate(BaseModel):
 class CampaignCreate(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     description: str = Field(min_length=2, max_length=1000)
-    reward_type: str = Field(pattern="^(points|discount|both)$")
-    points_amount: int = Field(default=0, ge=0, le=10000)
-    discount_label: str = Field(default="", max_length=80)  # e.g. "10% off any drink"
+    discount_label: str = Field(default="", max_length=80)  # optional in-store perk (e.g. "10% off")
     terms: str = Field(default="", max_length=500)
     image_ids: Optional[List[str]] = None
     start_date: Optional[str] = Field(default=None, max_length=10)  # YYYY-MM-DD
@@ -287,14 +285,19 @@ class CampaignCreate(BaseModel):
 class CampaignUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=2, max_length=80)
     description: Optional[str] = Field(default=None, min_length=2, max_length=1000)
-    reward_type: Optional[str] = Field(default=None, pattern="^(points|discount|both)$")
-    points_amount: Optional[int] = Field(default=None, ge=0, le=10000)
     discount_label: Optional[str] = Field(default=None, max_length=80)
     terms: Optional[str] = Field(default=None, max_length=500)
     image_ids: Optional[List[str]] = None
     start_date: Optional[str] = Field(default=None, max_length=10)
     end_date: Optional[str] = Field(default=None, max_length=10)
     enabled: Optional[bool] = None
+
+
+class CampaignApproveIn(BaseModel):
+    exp_per_redemption: int = Field(default=0, ge=0, le=10000)
+    tokens_per_redemption: int = Field(default=0, ge=0, le=100000)
+    budget_exp: int = Field(default=0, ge=0, le=10_000_000)
+    budget_tokens: int = Field(default=0, ge=0, le=10_000_000)
 
 
 class CampaignRejectIn(BaseModel):
@@ -309,6 +312,34 @@ class PartnerRedeemIn(BaseModel):
     campaign_id: str
     user_id: str
     note: Optional[str] = Field(default=None, max_length=200)
+
+
+class StoreItemIn(BaseModel):
+    category: str = Field(pattern="^(appearance|seasonal|events|collections)$")
+    subcategory: str = Field(max_length=40)
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=500)
+    price_tokens: int = Field(default=0, ge=0, le=1_000_000)
+    stock: int = Field(default=-1, ge=-1, le=1_000_000)  # -1 = unlimited
+    image_id: Optional[str] = Field(default=None, max_length=200)
+    enabled: bool = True
+    active_from: Optional[str] = Field(default=None, max_length=10)
+    active_until: Optional[str] = Field(default=None, max_length=10)
+    sort_order: int = Field(default=0, ge=0, le=10_000)
+
+
+class StoreItemUpdate(BaseModel):
+    category: Optional[str] = Field(default=None, pattern="^(appearance|seasonal|events|collections)$")
+    subcategory: Optional[str] = Field(default=None, max_length=40)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    description: Optional[str] = Field(default=None, max_length=500)
+    price_tokens: Optional[int] = Field(default=None, ge=0, le=1_000_000)
+    stock: Optional[int] = Field(default=None, ge=-1, le=1_000_000)
+    image_id: Optional[str] = Field(default=None, max_length=200)
+    enabled: Optional[bool] = None
+    active_from: Optional[str] = Field(default=None, max_length=10)
+    active_until: Optional[str] = Field(default=None, max_length=10)
+    sort_order: Optional[int] = Field(default=None, ge=0, le=10_000)
 
 
 class AdSettingsIn(BaseModel):
@@ -350,7 +381,68 @@ class BioUpdate(BaseModel):
 
 
 # ---------- utility: sanitize user for public output ----------
+RANK_TITLES: List[Tuple[int, str]] = [
+    (1, "New Neighbor"),
+    (5, "Resident"),
+    (10, "Regular"),
+    (20, "Contributor"),
+    (30, "Local Guide"),
+    (40, "Community Builder"),
+    (50, "Town Champion"),
+    (60, "Community Pillar"),
+    (75, "Huni Elder"),
+    (100, "Legend"),
+]
+
+# Base XP thresholds for levels 1-10 as specified
+_BASE_RANK_THRESHOLDS: List[int] = [0, 100, 250, 450, 700, 1000, 1400, 1900, 2500, 3200]
+
+
+def _build_rank_thresholds(max_level: int = 100) -> List[int]:
+    """Cumulative XP required to reach each level index (0-based). +15% per level after level 10."""
+    thresholds = list(_BASE_RANK_THRESHOLDS)
+    # From level 11 onward, increase last step by ~15%
+    last_step = thresholds[-1] - thresholds[-2]  # step from 9→10
+    while len(thresholds) < max_level:
+        last_step = int(round(last_step * 1.15))
+        thresholds.append(thresholds[-1] + last_step)
+    return thresholds
+
+
+RANK_THRESHOLDS: List[int] = _build_rank_thresholds(100)
+
+
+def rank_for_exp(exp: int) -> Dict[str, Any]:
+    """Compute {level, title, exp_current_level, exp_next_level, progress_percent}."""
+    exp = max(0, int(exp or 0))
+    level = 1
+    for i, threshold in enumerate(RANK_THRESHOLDS):
+        if exp >= threshold:
+            level = i + 1
+        else:
+            break
+    # Title = last title whose min_level <= current level
+    title = RANK_TITLES[0][1]
+    for min_lvl, name in RANK_TITLES:
+        if level >= min_lvl:
+            title = name
+    exp_at_level = RANK_THRESHOLDS[level - 1] if level - 1 < len(RANK_THRESHOLDS) else RANK_THRESHOLDS[-1]
+    exp_next = RANK_THRESHOLDS[level] if level < len(RANK_THRESHOLDS) else exp_at_level  # max level
+    span = max(1, exp_next - exp_at_level)
+    progress = int(round(((exp - exp_at_level) / span) * 100)) if level < len(RANK_THRESHOLDS) else 100
+    return {
+        "level": level,
+        "title": title,
+        "exp": exp,
+        "exp_current_level": exp_at_level,
+        "exp_next_level": exp_next,
+        "progress_percent": max(0, min(100, progress)),
+    }
+
+
 def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
+    exp = int(u.get("exp", u.get("points", 0)) or 0)
+    rank = rank_for_exp(exp)
     return {
         "id": u["id"],
         "alias": u["alias"],
@@ -365,10 +457,61 @@ def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
         "picture": u.get("picture", ""),
         "auth_provider": u.get("auth_provider", "password"),
         "role": u.get("role", "user"),
-        "points": u.get("points", 0),
+        # legacy alias for existing UI code
+        "points": exp,
+        "exp": exp,
+        "tokens": int(u.get("tokens", 0) or 0),
+        "rank_level": rank["level"],
+        "rank_title": rank["title"],
         "business_name": u.get("business_name", ""),
         "business_type": u.get("business_type", ""),
     }
+
+
+async def award_xp(user_id: str, amount: int, reason: str) -> None:
+    """Fire-and-forget XP grant. Silently ignores zero/negative amounts."""
+    if amount <= 0:
+        return
+    try:
+        await db.users.update_one({"id": user_id}, {"$inc": {"exp": amount}})
+        await db.xp_ledger.insert_one({
+            "id": new_id(),
+            "user_id": user_id,
+            "amount": amount,
+            "reason": reason,
+            "created_at": now().isoformat(),
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def bump_daily(user_id: str, key: str) -> int:
+    """Increment today's counter for `key`, resetting when the day changes. Returns the new count."""
+    today = now().date().isoformat()
+    doc = await db.users.find_one({"id": user_id}, {"_id": 0, "daily_stats": 1})
+    stats = ((doc or {}).get("daily_stats") or {})
+    if stats.get("date") != today:
+        stats = {"date": today}
+    new_count = int(stats.get(key, 0)) + 1
+    stats[key] = new_count
+    await db.users.update_one({"id": user_id}, {"$set": {"daily_stats": stats}})
+    return new_count
+
+
+async def award_xp_daily_capped(user_id: str, key: str, cap: int, per_hit_xp: int, reason: str) -> None:
+    """Award XP up to `cap` times per day for `key`."""
+    n = await bump_daily(user_id, key)
+    if n <= cap:
+        await award_xp(user_id, per_hit_xp, reason)
+
+
+async def award_xp_once_per_day(user_id: str, key: str, xp_amount: int, reason: str) -> bool:
+    """Award `xp_amount` if this is the first time today for `key`. Returns True if awarded."""
+    n = await bump_daily(user_id, key)
+    if n == 1:
+        await award_xp(user_id, xp_amount, reason)
+        return True
+    return False
 
 
 async def maybe_promote_admin(user: Dict[str, Any]) -> Dict[str, Any]:
@@ -585,8 +728,10 @@ async def login(inp: LoginIn) -> AuthOut:
     if not user or not verify_pw(inp.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     user = await maybe_promote_admin(user)
+    await award_xp_once_per_day(user["id"], "daily_login", 5, "daily_login")
+    fresh = await db.users.find_one({"id": user["id"]})
     token = make_token(user["id"])
-    return AuthOut(token=token, user=public_user(user))
+    return AuthOut(token=token, user=public_user(fresh or user))
 
 @api.post("/auth/firebase", response_model=AuthOut)
 async def firebase_login(inp: FirebaseAuthIn) -> AuthOut:
@@ -701,6 +846,10 @@ async def create_post(
         {"id": user["id"]},
         {"$inc": {"post_count": 1}},
     )
+
+    # XP awards
+    await award_xp(user["id"], 15, "create_post")
+    await award_xp_once_per_day(user["id"], "first_post_bonus", 10, "first_post_of_day")
 
     return await _hydrate_post(doc, user["id"])
 
@@ -822,6 +971,10 @@ async def react_post(post_id: str, inp: ReactionIn, user: Dict[str, Any] = Depen
         reactions[inp.kind] = reactions.get(inp.kind, 0) + 1
         reactors[user["id"]] = inp.kind
     await db.posts.update_one({"id": post_id}, {"$set": {"reactions": reactions, "reactors": reactors}})
+
+    # XP: like a post (capped 20/day). Only award on positive add (not on toggle off).
+    if prev != inp.kind and p["author_id"] != user["id"]:
+        await award_xp_daily_capped(user["id"], "react_awards", 20, 1, "like_post")
 
     # notification + helpful score bump
     if p["author_id"] != user["id"] and prev != inp.kind:
@@ -1136,7 +1289,7 @@ async def admin_update_settings(inp: AdSettingsIn, user: Dict[str, Any] = Depend
 
 # ---------- routes: campaigns (partner + admin + public) ----------
 def _campaign_status_effective(c: Dict[str, Any]) -> str:
-    """Compute display status based on stored status + dates."""
+    """Compute display status based on stored status + dates + budget."""
     if c.get("status") != "approved":
         return c.get("status", "pending")
     if not c.get("enabled", True):
@@ -1148,6 +1301,15 @@ def _campaign_status_effective(c: Dict[str, Any]) -> str:
         return "expired"
     if sd and today < sd:
         return "scheduled"
+    # Auto-pause if budget is depleted vs per-person allocation
+    exp_per = int(c.get("exp_per_redemption", 0) or 0)
+    tok_per = int(c.get("tokens_per_redemption", 0) or 0)
+    rem_exp = int(c.get("remaining_exp", 0) or 0)
+    rem_tok = int(c.get("remaining_tokens", 0) or 0)
+    exp_ok = exp_per == 0 or rem_exp >= exp_per
+    tok_ok = tok_per == 0 or rem_tok >= tok_per
+    if not (exp_ok and tok_ok):
+        return "depleted"
     return "live"
 
 
@@ -1163,8 +1325,6 @@ def _hydrate_campaign(c: Dict[str, Any], partner: Optional[Dict[str, Any]] = Non
         } if partner else None,
         "title": c["title"],
         "description": c["description"],
-        "reward_type": c["reward_type"],
-        "points_amount": c.get("points_amount", 0),
         "discount_label": c.get("discount_label", ""),
         "terms": c.get("terms", ""),
         "images": c.get("image_ids", []) or [],
@@ -1176,6 +1336,16 @@ def _hydrate_campaign(c: Dict[str, Any], partner: Optional[Dict[str, Any]] = Non
         "rejected_reason": c.get("rejected_reason"),
         "approved_at": c.get("approved_at"),
         "redemption_count": c.get("redemption_count", 0),
+        # New economy fields
+        "exp_per_redemption": int(c.get("exp_per_redemption", 0) or 0),
+        "tokens_per_redemption": int(c.get("tokens_per_redemption", 0) or 0),
+        "budget_exp": int(c.get("budget_exp", 0) or 0),
+        "budget_tokens": int(c.get("budget_tokens", 0) or 0),
+        "remaining_exp": int(c.get("remaining_exp", 0) or 0),
+        "remaining_tokens": int(c.get("remaining_tokens", 0) or 0),
+        # Legacy — always report reward_type=discount for backwards-compat surfaces
+        "reward_type": "discount" if c.get("discount_label") else "tokens",
+        "points_amount": int(c.get("exp_per_redemption", 0) or 0),
         "created_at": c["created_at"],
     }
 
@@ -1188,25 +1358,26 @@ async def _load_campaign_with_partner(c: Dict[str, Any]) -> Dict[str, Any]:
 @api.post("/partner/campaigns")
 async def partner_create_campaign(inp: CampaignCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     require_role(user, "partner", "admin")
-    if inp.reward_type in ("points", "both") and inp.points_amount <= 0:
-        raise HTTPException(status_code=422, detail="Points reward needs a positive points_amount")
-    if inp.reward_type in ("discount", "both") and not inp.discount_label.strip():
-        raise HTTPException(status_code=422, detail="Discount reward needs a discount_label")
     doc = {
         "id": new_id(),
         "partner_id": user["id"],
         "title": inp.title.strip(),
         "description": inp.description.strip(),
-        "reward_type": inp.reward_type,
-        "points_amount": inp.points_amount if inp.reward_type in ("points", "both") else 0,
-        "discount_label": inp.discount_label.strip() if inp.reward_type in ("discount", "both") else "",
+        "discount_label": inp.discount_label.strip(),
         "terms": inp.terms.strip(),
         "image_ids": (inp.image_ids or [])[:4],
         "start_date": (inp.start_date or "").strip() or None,
         "end_date": (inp.end_date or "").strip() or None,
-        "status": "pending",  # admin approves
+        "status": "pending",  # admin approves + sets budgets
         "enabled": True,
         "redemption_count": 0,
+        # Economy fields — filled in when admin approves
+        "exp_per_redemption": 0,
+        "tokens_per_redemption": 0,
+        "budget_exp": 0,
+        "budget_tokens": 0,
+        "remaining_exp": 0,
+        "remaining_tokens": 0,
         "created_at": now().isoformat(),
     }
     await db.campaigns.insert_one(doc)
@@ -1240,7 +1411,7 @@ async def partner_update_campaign(campaign_id: str, inp: CampaignUpdate, user: D
     if c["partner_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not allowed")
     updates: Dict[str, Any] = {}
-    for f in ("title", "description", "reward_type", "points_amount", "discount_label", "terms", "start_date", "end_date", "enabled"):
+    for f in ("title", "description", "discount_label", "terms", "start_date", "end_date", "enabled"):
         v = getattr(inp, f)
         if v is None:
             continue
@@ -1248,7 +1419,7 @@ async def partner_update_campaign(campaign_id: str, inp: CampaignUpdate, user: D
     if inp.image_ids is not None:
         updates["image_ids"] = inp.image_ids[:4]
     # If a partner edits content (not just toggles enabled), reset to pending
-    content_edited = any(k in updates for k in ("title", "description", "reward_type", "points_amount", "discount_label", "terms", "start_date", "end_date"))
+    content_edited = any(k in updates for k in ("title", "description", "discount_label", "terms", "start_date", "end_date"))
     if content_edited and user.get("role") != "admin":
         updates["status"] = "pending"
         updates["rejected_reason"] = None
@@ -1336,8 +1507,16 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
     existing = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": inp.user_id})
     if existing:
         raise HTTPException(status_code=409, detail="This user has already redeemed this campaign")
-    points_award = c.get("points_amount", 0) if c["reward_type"] in ("points", "both") else 0
-    discount_label = c.get("discount_label", "") if c["reward_type"] in ("discount", "both") else ""
+    exp_award = int(c.get("exp_per_redemption", 0) or 0)
+    token_award = int(c.get("tokens_per_redemption", 0) or 0)
+    discount_label = c.get("discount_label", "") or ""
+    # Check budget
+    rem_exp = int(c.get("remaining_exp", 0) or 0)
+    rem_tok = int(c.get("remaining_tokens", 0) or 0)
+    if exp_award > 0 and rem_exp < exp_award:
+        raise HTTPException(status_code=400, detail="Campaign EXP budget depleted")
+    if token_award > 0 and rem_tok < token_award:
+        raise HTTPException(status_code=400, detail="Campaign token budget depleted")
     r_doc = {
         "id": new_id(),
         "campaign_id": c["id"],
@@ -1346,29 +1525,59 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
         "partner_business_name": user.get("business_name") or user.get("alias", ""),
         "user_id": inp.user_id,
         "user_alias": target.get("alias", ""),
-        "points_awarded": points_award,
+        "exp_awarded": exp_award,
+        "tokens_awarded": token_award,
+        # legacy alias for existing UI:
+        "points_awarded": exp_award,
         "discount_applied": discount_label,
         "note": (inp.note or "").strip() or None,
         "redeemed_at": now().isoformat(),
     }
     await db.redemptions.insert_one(r_doc)
     r_doc.pop("_id", None)
-    if points_award > 0:
-        await db.users.update_one({"id": inp.user_id}, {"$inc": {"points": points_award}})
-    await db.campaigns.update_one({"id": c["id"]}, {"$inc": {"redemption_count": 1}})
+    inc_updates: Dict[str, int] = {}
+    if exp_award > 0:
+        inc_updates["exp"] = exp_award
+    if token_award > 0:
+        inc_updates["tokens"] = token_award
+    if inc_updates:
+        await db.users.update_one({"id": inp.user_id}, {"$inc": inc_updates})
+    # Debit campaign budget
+    camp_inc: Dict[str, int] = {"redemption_count": 1}
+    if exp_award > 0:
+        camp_inc["remaining_exp"] = -exp_award
+    if token_award > 0:
+        camp_inc["remaining_tokens"] = -token_award
+    await db.campaigns.update_one({"id": c["id"]}, {"$inc": camp_inc})
     # notify the user
+    reward_text_parts: List[str] = []
+    if exp_award > 0:
+        reward_text_parts.append(f"+{exp_award} EXP")
+    if token_award > 0:
+        reward_text_parts.append(f"+{token_award} tokens")
+    if discount_label:
+        reward_text_parts.append(discount_label)
+    reward_text = " · ".join(reward_text_parts) if reward_text_parts else "campaign applied"
     await db.notifications.insert_one({
         "id": new_id(),
         "user_id": inp.user_id,
         "type": "reward",
         "actor_alias": user.get("business_name") or user.get("alias", ""),
         "campaign_id": c["id"],
-        "content_preview": f"🎉 {c['title']} · " + (f"+{points_award} pts" if points_award else discount_label),
+        "content_preview": f"🎉 {c['title']} · {reward_text}",
         "created_at": now().isoformat(),
         "read": False,
     })
     await ws_manager.send_to(inp.user_id, {"type": "notification"})
-    return {"status": "ok", "redemption": r_doc, "user_new_points": (target.get("points", 0) + points_award)}
+    fresh_user = await db.users.find_one({"id": inp.user_id}, {"_id": 0, "exp": 1, "tokens": 1})
+    return {
+        "status": "ok",
+        "redemption": r_doc,
+        "user_new_exp": (fresh_user or {}).get("exp", 0),
+        "user_new_tokens": (fresh_user or {}).get("tokens", 0),
+        # legacy
+        "user_new_points": (fresh_user or {}).get("exp", 0),
+    }
 
 
 @api.get("/partner/redemptions")
@@ -1415,11 +1624,28 @@ async def get_campaign_public(campaign_id: str, user: Dict[str, Any] = Depends(g
 
 
 # ---------- user points + redemptions ----------
+@api.get("/me/economy")
+async def my_economy(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "exp": 1, "tokens": 1, "points": 1})
+    exp = int((fresh or {}).get("exp", (fresh or {}).get("points", 0)) or 0)
+    tokens = int((fresh or {}).get("tokens", 0) or 0)
+    redemption_count = await db.redemptions.count_documents({"user_id": user["id"]})
+    rank = rank_for_exp(exp)
+    return {
+        "exp": exp,
+        "tokens": tokens,
+        "redemptions": redemption_count,
+        "rank": rank,
+        # legacy
+        "points": exp,
+    }
+
+
 @api.get("/me/points")
 async def my_points(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "points": 1})
-    redemption_count = await db.redemptions.count_documents({"user_id": user["id"]})
-    return {"points": (fresh or {}).get("points", 0), "redemptions": redemption_count}
+    """Legacy alias — kept for backwards compat with existing UI."""
+    econ = await my_economy(user)
+    return {"points": econ["exp"], "exp": econ["exp"], "tokens": econ["tokens"], "redemptions": econ["redemptions"], "rank": econ["rank"]}
 
 
 @api.get("/me/redemptions")
@@ -1447,28 +1673,48 @@ async def admin_list_campaigns(
 
 
 @api.post("/admin/campaigns/{campaign_id}/approve")
-async def admin_approve_campaign(campaign_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+async def admin_approve_campaign(campaign_id: str, inp: CampaignApproveIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     require_role(user, "admin")
     c = await db.campaigns.find_one({"id": campaign_id})
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    await db.campaigns.update_one(
-        {"id": campaign_id},
-        {"$set": {"status": "approved", "approved_at": now().isoformat(), "approved_by": user["id"], "rejected_reason": None}},
-    )
+    # Validate: per-person must not exceed budget for whichever currency is set
+    if inp.exp_per_redemption > 0 and inp.budget_exp < inp.exp_per_redemption:
+        raise HTTPException(status_code=422, detail="EXP budget must be at least the per-person allocation")
+    if inp.tokens_per_redemption > 0 and inp.budget_tokens < inp.tokens_per_redemption:
+        raise HTTPException(status_code=422, detail="Token budget must be at least the per-person allocation")
+    updates = {
+        "status": "approved",
+        "approved_at": now().isoformat(),
+        "approved_by": user["id"],
+        "rejected_reason": None,
+        "exp_per_redemption": inp.exp_per_redemption,
+        "tokens_per_redemption": inp.tokens_per_redemption,
+        "budget_exp": inp.budget_exp,
+        "budget_tokens": inp.budget_tokens,
+        "remaining_exp": inp.budget_exp,
+        "remaining_tokens": inp.budget_tokens,
+    }
+    await db.campaigns.update_one({"id": campaign_id}, {"$set": updates})
+    c.update(updates)
     # notify partner
+    perks: List[str] = []
+    if inp.exp_per_redemption > 0:
+        perks.append(f"+{inp.exp_per_redemption} EXP")
+    if inp.tokens_per_redemption > 0:
+        perks.append(f"+{inp.tokens_per_redemption} tokens")
+    perks_text = " & ".join(perks) if perks else "in-store discount only"
     await db.notifications.insert_one({
         "id": new_id(),
         "user_id": c["partner_id"],
         "type": "campaign_approved",
         "actor_alias": "Huni Admin",
         "campaign_id": campaign_id,
-        "content_preview": f"✅ '{c['title']}' is now live",
+        "content_preview": f"✅ '{c['title']}' is now live · {perks_text}",
         "created_at": now().isoformat(),
         "read": False,
     })
     await ws_manager.send_to(c["partner_id"], {"type": "notification"})
-    c["status"] = "approved"
     return await _load_campaign_with_partner(c)
 
 
@@ -1497,6 +1743,158 @@ async def admin_reject_campaign(campaign_id: str, inp: CampaignRejectIn, user: D
     c["status"] = "rejected"
     c["rejected_reason"] = reason
     return await _load_campaign_with_partner(c)
+
+
+# ---------- routes: Huni Store ----------
+STORE_CATEGORIES: Dict[str, List[Dict[str, str]]] = {
+    "appearance": [
+        {"id": "background_colors", "label": "Background Colors", "icon": "color-palette-outline"},
+        {"id": "patterns", "label": "Background Patterns", "icon": "grid-outline"},
+        {"id": "borders", "label": "Profile Borders", "icon": "ellipse-outline"},
+        {"id": "avatar_packs", "label": "Avatar Packs", "icon": "happy-outline"},
+    ],
+    "seasonal": [
+        {"id": "christmas", "label": "Christmas", "icon": "snow-outline"},
+        {"id": "fiesta", "label": "Fiesta", "icon": "musical-notes-outline"},
+        {"id": "halloween", "label": "Halloween", "icon": "skull-outline"},
+        {"id": "limited", "label": "Limited-Time", "icon": "hourglass-outline"},
+    ],
+    "events": [
+        {"id": "raffles", "label": "Raffles", "icon": "ticket-outline"},
+        {"id": "competitions", "label": "Competitions", "icon": "trophy-outline"},
+        {"id": "treasure_hunts", "label": "Treasure Hunts", "icon": "map-outline"},
+        {"id": "activities", "label": "Community Activities", "icon": "people-outline"},
+    ],
+    "collections": [
+        {"id": "town_sets", "label": "Town Sets", "icon": "business-outline"},
+        {"id": "event_sets", "label": "Event Sets", "icon": "calendar-outline"},
+        {"id": "partner_sets", "label": "Partner Sets", "icon": "briefcase-outline"},
+        {"id": "legacy", "label": "Legacy Items", "icon": "medal-outline"},
+    ],
+}
+
+
+def _hydrate_store_item(x: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": x["id"],
+        "category": x["category"],
+        "subcategory": x.get("subcategory", ""),
+        "name": x["name"],
+        "description": x.get("description", ""),
+        "price_tokens": int(x.get("price_tokens", 0) or 0),
+        "stock": int(x.get("stock", -1) if x.get("stock") is not None else -1),
+        "image_id": x.get("image_id"),
+        "enabled": bool(x.get("enabled", True)),
+        "active_from": x.get("active_from"),
+        "active_until": x.get("active_until"),
+        "sort_order": int(x.get("sort_order", 0) or 0),
+        "created_at": x.get("created_at"),
+    }
+
+
+@api.get("/store/categories")
+async def store_categories(_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    return {"categories": STORE_CATEGORIES}
+
+
+@api.get("/store/items")
+async def store_items_public(
+    category: Optional[str] = Query(default=None),
+    subcategory: Optional[str] = Query(default=None),
+    _user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    today = now().date().isoformat()
+    q: Dict[str, Any] = {"enabled": True}
+    if category:
+        q["category"] = category
+    if subcategory:
+        q["subcategory"] = subcategory
+    rows = await db.store_items.find(q, {"_id": 0}).sort([("sort_order", 1), ("created_at", -1)]).to_list(500)
+    out: List[Dict[str, Any]] = []
+    for x in rows:
+        if x.get("active_from") and today < x["active_from"]:
+            continue
+        if x.get("active_until") and today > x["active_until"]:
+            continue
+        out.append(_hydrate_store_item(x))
+    return out
+
+
+@api.get("/admin/store/items")
+async def admin_list_store_items(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    require_role(user, "admin")
+    rows = await db.store_items.find({}, {"_id": 0}).sort([("category", 1), ("sort_order", 1), ("created_at", -1)]).to_list(1000)
+    return [_hydrate_store_item(x) for x in rows]
+
+
+@api.post("/admin/store/items")
+async def admin_create_store_item(inp: StoreItemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    valid_subs = [s["id"] for s in STORE_CATEGORIES.get(inp.category, [])]
+    if inp.subcategory not in valid_subs:
+        raise HTTPException(status_code=422, detail=f"Invalid subcategory for {inp.category}")
+    doc = {
+        "id": new_id(),
+        "category": inp.category,
+        "subcategory": inp.subcategory,
+        "name": inp.name.strip(),
+        "description": inp.description.strip(),
+        "price_tokens": inp.price_tokens,
+        "stock": inp.stock,
+        "image_id": inp.image_id,
+        "enabled": inp.enabled,
+        "active_from": (inp.active_from or "").strip() or None,
+        "active_until": (inp.active_until or "").strip() or None,
+        "sort_order": inp.sort_order,
+        "created_at": now().isoformat(),
+    }
+    await db.store_items.insert_one(doc)
+    doc.pop("_id", None)
+    return _hydrate_store_item(doc)
+
+
+@api.get("/admin/store/items/{item_id}")
+async def admin_get_store_item(item_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    x = await db.store_items.find_one({"id": item_id}, {"_id": 0})
+    if not x:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _hydrate_store_item(x)
+
+
+@api.patch("/admin/store/items/{item_id}")
+async def admin_update_store_item(item_id: str, inp: StoreItemUpdate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    updates: Dict[str, Any] = {}
+    for f in ("category", "subcategory", "name", "description", "price_tokens", "stock", "image_id", "enabled", "active_from", "active_until", "sort_order"):
+        v = getattr(inp, f)
+        if v is None:
+            continue
+        updates[f] = v.strip() if isinstance(v, str) else v
+    if "category" in updates or "subcategory" in updates:
+        cur = await db.store_items.find_one({"id": item_id})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Item not found")
+        new_cat = updates.get("category", cur["category"])
+        new_sub = updates.get("subcategory", cur.get("subcategory", ""))
+        valid_subs = [s["id"] for s in STORE_CATEGORIES.get(new_cat, [])]
+        if new_sub not in valid_subs:
+            raise HTTPException(status_code=422, detail=f"Invalid subcategory for {new_cat}")
+    if updates:
+        await db.store_items.update_one({"id": item_id}, {"$set": updates})
+    x = await db.store_items.find_one({"id": item_id}, {"_id": 0})
+    if not x:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _hydrate_store_item(x)
+
+
+@api.delete("/admin/store/items/{item_id}")
+async def admin_delete_store_item(item_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+    require_role(user, "admin")
+    res = await db.store_items.delete_one({"id": item_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"status": "ok"}
 
 
 # ---------- routes: comments ----------
@@ -1573,6 +1971,9 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
     else:
         await db.posts.update_one({"id": post_id}, {"$inc": {"comment_count": 1}})
     await db.users.update_one({"id": user["id"]}, {"$inc": {"comment_count": 1}})
+
+    # XP: comment (capped 5/day to prevent farming)
+    await award_xp_daily_capped(user["id"], "comment_awards", 5, 8, "comment")
 
     # notify post author / ad owner on top-level comment
     owner_id = p["advertiser_id"] if is_ad else p["author_id"]
@@ -2102,6 +2503,36 @@ async def on_startup() -> None:
     await db.redemptions.create_index([("campaign_id", 1), ("user_id", 1)], unique=True)
     await db.redemptions.create_index([("user_id", 1), ("redeemed_at", -1)])
     await db.redemptions.create_index([("partner_id", 1), ("redeemed_at", -1)])
+    await db.store_items.create_index("id", unique=True)
+    await db.store_items.create_index([("category", 1), ("sort_order", 1)])
+    await db.store_items.create_index("enabled")
+    await db.xp_ledger.create_index("id", unique=True)
+    await db.xp_ledger.create_index([("user_id", 1), ("created_at", -1)])
+
+    # Economy migration: backfill exp / tokens / campaign budget fields
+    try:
+        await db.users.update_many(
+            {"exp": {"$exists": False}},
+            [{"$set": {"exp": {"$ifNull": ["$points", 0]}}}],
+        )
+        await db.users.update_many({"tokens": {"$exists": False}}, {"$set": {"tokens": 0}})
+        await db.campaigns.update_many(
+            {"exp_per_redemption": {"$exists": False}},
+            [{"$set": {
+                "exp_per_redemption": {"$ifNull": ["$points_amount", 0]},
+                "tokens_per_redemption": 0,
+                "budget_exp": 0,
+                "budget_tokens": 0,
+                "remaining_exp": 0,
+                "remaining_tokens": 0,
+            }}],
+        )
+        await db.redemptions.update_many(
+            {"exp_awarded": {"$exists": False}},
+            [{"$set": {"exp_awarded": {"$ifNull": ["$points_awarded", 0]}, "tokens_awarded": 0}}],
+        )
+    except Exception as _mig:  # noqa: BLE001
+        print(f"⚠️ economy migration skipped: {_mig}")
     # promote configured admin emails
     if ADMIN_EMAILS:
         await db.users.update_many(

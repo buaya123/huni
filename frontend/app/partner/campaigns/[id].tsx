@@ -58,14 +58,42 @@ export default function CampaignDetail() {
           <Text style={styles.body}>{c.description}</Text>
 
           <View style={styles.reward}>
-            {(c.reward_type === "points" || c.reward_type === "both") && <Text style={styles.rewardLine}>+{c.points_amount} points per redemption</Text>}
-            {(c.reward_type === "discount" || c.reward_type === "both") && <Text style={styles.rewardLine}>{c.discount_label}</Text>}
+            {c.exp_per_redemption > 0 && <Text style={styles.rewardLine}>+{c.exp_per_redemption} EXP per redemption</Text>}
+            {c.tokens_per_redemption > 0 && <Text style={styles.rewardLine}>+{c.tokens_per_redemption} tokens per redemption</Text>}
+            {!!c.discount_label && <Text style={styles.rewardLine}>Discount: {c.discount_label}</Text>}
+            {c.exp_per_redemption === 0 && c.tokens_per_redemption === 0 && !c.discount_label && (
+              <Text style={styles.rewardLine}>Awaiting admin approval to set reward amounts</Text>
+            )}
           </View>
+
+          {c.status === "approved" && (c.budget_exp > 0 || c.budget_tokens > 0) && (
+            <View style={styles.budgetBox}>
+              <Text style={styles.budgetTitle}>Campaign budget</Text>
+              {c.budget_exp > 0 && (
+                <View style={styles.budgetRow}>
+                  <Text style={styles.budgetLabel}>EXP</Text>
+                  <View style={styles.budgetTrack}>
+                    <View style={[styles.budgetFill, { width: `${Math.max(0, Math.min(100, (c.remaining_exp / c.budget_exp) * 100))}%`, backgroundColor: colors.success }]} />
+                  </View>
+                  <Text style={styles.budgetText}>{c.remaining_exp.toLocaleString()} / {c.budget_exp.toLocaleString()}</Text>
+                </View>
+              )}
+              {c.budget_tokens > 0 && (
+                <View style={styles.budgetRow}>
+                  <Text style={styles.budgetLabel}>Tokens</Text>
+                  <View style={styles.budgetTrack}>
+                    <View style={[styles.budgetFill, { width: `${Math.max(0, Math.min(100, (c.remaining_tokens / c.budget_tokens) * 100))}%`, backgroundColor: colors.brand }]} />
+                  </View>
+                  <Text style={styles.budgetText}>{c.remaining_tokens.toLocaleString()} / {c.budget_tokens.toLocaleString()}</Text>
+                </View>
+              )}
+            </View>
+          )}
 
           <View style={styles.statsRow}>
             <Stat label="Redemptions" value={String(c.redemption_count)} />
             <Stat label="Enabled" value={c.enabled ? "Yes" : "No"} />
-            <Stat label="Status" value={c.status} />
+            <Stat label="Status" value={c.state} />
           </View>
 
           <View style={styles.toggleRow}>
@@ -111,6 +139,13 @@ const styles = StyleSheet.create({
   body: { color: colors.onSurface, lineHeight: 20 },
   reward: { backgroundColor: colors.brandTertiary, padding: spacing.md, borderRadius: radius.md, gap: 4 },
   rewardLine: { color: colors.onBrandTertiary, fontWeight: "800" },
+  budgetBox: { backgroundColor: colors.surfaceTertiary, padding: spacing.md, borderRadius: radius.md, gap: 6 },
+  budgetTitle: { fontWeight: "900", color: colors.onSurface, fontSize: font.sm },
+  budgetRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  budgetLabel: { color: colors.onSurface, fontWeight: "700", width: 54 },
+  budgetTrack: { flex: 1, height: 8, backgroundColor: colors.surface, borderRadius: 4, overflow: "hidden" },
+  budgetFill: { height: "100%", borderRadius: 4 },
+  budgetText: { color: colors.muted, fontSize: 11, fontWeight: "700", minWidth: 90, textAlign: "right" },
   statsRow: { flexDirection: "row", gap: spacing.sm },
   stat: { flex: 1, backgroundColor: colors.surfaceTertiary, padding: spacing.md, borderRadius: radius.sm, alignItems: "center" },
   statValue: { fontWeight: "900", color: colors.onSurface, fontSize: font.lg },

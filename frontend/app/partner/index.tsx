@@ -15,6 +15,7 @@ const STATE_STYLES: Record<string, { bg: string; fg: string; label: string }> = 
   paused: { bg: "#F2EFEA", fg: "#4A4744", label: "Paused" },
   scheduled: { bg: "#E3EEFF", fg: "#1F4D9E", label: "Scheduled" },
   expired: { bg: "#F2EFEA", fg: "#8A8582", label: "Expired" },
+  depleted: { bg: "#FFE1CC", fg: "#8A4B00", label: "Budget out" },
   rejected: { bg: "#FDE0E0", fg: "#8B1F1F", label: "Rejected" },
 };
 
@@ -109,9 +110,12 @@ export default function PartnerHub() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cTitle} numberOfLines={1}>{c.title}</Text>
                   <Text style={styles.cSub} numberOfLines={1}>
-                    {c.reward_type !== "discount" && `+${c.points_amount}pts`}
-                    {c.reward_type === "both" && " · "}
-                    {c.reward_type !== "points" && c.discount_label}
+                    {c.exp_per_redemption > 0 && `+${c.exp_per_redemption} EXP`}
+                    {c.exp_per_redemption > 0 && (c.tokens_per_redemption > 0 || c.discount_label) && " · "}
+                    {c.tokens_per_redemption > 0 && `+${c.tokens_per_redemption} tokens`}
+                    {c.tokens_per_redemption > 0 && c.discount_label && " · "}
+                    {c.discount_label}
+                    {!c.exp_per_redemption && !c.tokens_per_redemption && !c.discount_label && "Awaiting approval"}
                   </Text>
                   <View style={styles.metaRow}>
                     <View style={[styles.pill, { backgroundColor: st.bg }]}>

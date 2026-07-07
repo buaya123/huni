@@ -24,14 +24,14 @@ type Campaign = {
   id: string;
   title: string;
   description: string;
-  reward_type: "points" | "discount" | "both";
-  points_amount: number;
+  exp_per_redemption: number;
+  tokens_per_redemption: number;
   discount_label: string;
   already_redeemed: boolean;
 };
 
 type ScanResult = {
-  user: { id: string; alias: string; points: number };
+  user: { id: string; alias: string; exp?: number; tokens?: number; points?: number };
   campaigns: Campaign[];
 };
 
@@ -152,7 +152,7 @@ export default function PartnerScan() {
             <Avatar alias={result.user.alias} size={56} />
             <View style={{ flex: 1 }}>
               <Text style={styles.userAlias}>{result.user.alias}</Text>
-              <Text style={styles.userSub}>{result.user.points ?? 0} Huni points</Text>
+              <Text style={styles.userSub}>Lv. {Math.floor((result.user.exp ?? result.user.points ?? 0) / 100) + 1} · {(result.user.exp ?? result.user.points ?? 0).toLocaleString()} EXP · {(result.user.tokens ?? 0).toLocaleString()} tokens</Text>
             </View>
             <Pressable onPress={rescan} testID="rescan-btn"><Ionicons name="close-circle" size={26} color={colors.muted} /></Pressable>
           </View>
@@ -170,9 +170,11 @@ export default function PartnerScan() {
                 <Text style={styles.cTitle}>{c.title}</Text>
                 <Text style={styles.cDesc} numberOfLines={2}>{c.description}</Text>
                 <Text style={styles.cReward}>
-                  {(c.reward_type === "points" || c.reward_type === "both") && `+${c.points_amount} pts`}
-                  {c.reward_type === "both" && "  •  "}
-                  {(c.reward_type === "discount" || c.reward_type === "both") && c.discount_label}
+                  {c.exp_per_redemption > 0 && `+${c.exp_per_redemption} EXP`}
+                  {c.exp_per_redemption > 0 && (c.tokens_per_redemption > 0 || !!c.discount_label) && "  •  "}
+                  {c.tokens_per_redemption > 0 && `+${c.tokens_per_redemption} tokens`}
+                  {c.tokens_per_redemption > 0 && !!c.discount_label && "  •  "}
+                  {c.discount_label}
                 </Text>
               </View>
               {c.already_redeemed ? (

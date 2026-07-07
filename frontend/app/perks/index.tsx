@@ -11,8 +11,6 @@ export type Campaign = {
   id: string;
   title: string;
   description: string;
-  reward_type: "points" | "discount" | "both";
-  points_amount: number;
   discount_label: string;
   terms: string;
   images: string[];
@@ -21,15 +19,28 @@ export type Campaign = {
   status: string;
   state: string;
   redemption_count: number;
+  // Economy (new)
+  exp_per_redemption: number;
+  tokens_per_redemption: number;
+  budget_exp: number;
+  budget_tokens: number;
+  remaining_exp: number;
+  remaining_tokens: number;
+  enabled?: boolean;
+  rejected_reason?: string | null;
+  // Legacy — still present in API but unused
+  reward_type?: string;
+  points_amount?: number;
   partner: { id: string; alias: string; business_name: string; business_type: string } | null;
   already_redeemed?: boolean;
 };
 
 function rewardBadge(c: Campaign) {
   const parts: string[] = [];
-  if (c.reward_type === "points" || c.reward_type === "both") parts.push(`+${c.points_amount} pts`);
-  if (c.reward_type === "discount" || c.reward_type === "both") parts.push(c.discount_label || "discount");
-  return parts.join(" · ");
+  if (c.exp_per_redemption > 0) parts.push(`+${c.exp_per_redemption} EXP`);
+  if (c.tokens_per_redemption > 0) parts.push(`+${c.tokens_per_redemption} tokens`);
+  if (c.discount_label) parts.push(c.discount_label);
+  return parts.length > 0 ? parts.join(" · ") : "In-store perk";
 }
 
 export default function Perks() {

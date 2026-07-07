@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,7 +26,7 @@ type AdminUser = {
   email: string;
   first_name: string;
   last_name: string;
-  role: "user" | "advertiser" | "admin";
+  role: "user" | "advertiser" | "partner" | "admin";
 };
 
 type AdminAd = {
@@ -35,6 +39,20 @@ type AdminAd = {
   advertiser?: { alias: string; email: string } | null;
 };
 
+type AdminCampaign = {
+  id: string;
+  title: string;
+  description: string;
+  reward_type: "points" | "discount" | "both";
+  points_amount: number;
+  discount_label: string;
+  status: string;
+  state: string;
+  redemption_count: number;
+  rejected_reason?: string | null;
+  partner: { id: string; alias: string; business_name: string; business_type: string } | null;
+};
+
 export default function AdminPanel() {
   const router = useRouter();
   const { user } = useAuth();
@@ -43,17 +61,21 @@ export default function AdminPanel() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [searching, setSearching] = useState(false);
   const [ads, setAds] = useState<AdminAd[]>([]);
+  const [campaigns, setCampaigns] = useState<AdminCampaign[]>([]);
+  const [promotePartner, setPromotePartner] = useState<{ userId: string; businessName: string; businessType: string } | null>(null);
 
   const isAdmin = user?.role === "admin";
 
   const load = useCallback(async () => {
     try {
-      const [s, allAds] = await Promise.all([
+      const [s, allAds, allCamps] = await Promise.all([
         api.get<{ ad_every_n_posts: number }>("/admin/settings"),
         api.get<AdminAd[]>("/admin/ads"),
+        api.get<AdminCampaign[]>("/admin/campaigns"),
       ]);
       setEveryN(s.ad_every_n_posts);
       setAds(allAds);
+      setCampaigns(allCamps);
     } catch { /* ignore */ }
   }, []);
 
@@ -73,11 +95,51 @@ export default function AdminPanel() {
     }
   };
 
-  const setRole = async (u: AdminUser, role: "user" | "advertiser") => {
+  const setRole = async (u: AdminUser, role: "user" | "advertiser" | "partner") => {
+    if (role === "partner") {
+      setPromotePartner({ userId: u.id, businessName: "", businessType: "" });
+      return;
+    }
     try {
       await api.post(`/admin/users/${u.id}/role`, { role });
       setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role } : x)));
     } catch { /* ignore */ }
+  };
+
+  const confirmPartnerPromotion = async () => {
+    if (!promotePartner) return;
+    try {
+      await api.post(`/admin/users/${promotePartner.userId}/role`, {
+        role: "partner",
+        business_name: promotePartner.businessName.trim(),
+        business_type: promotePartner.businessType.trim(),
+      });
+      setUsers((prev) => prev.map((x) => (x.id === promotePartner.userId ? { ...x, role: "partner" } : x)));
+      setPromotePartner(null);
+    } catch { /* ignore */ }
+  };
+
+  const approveCampaign = async (c: AdminCampaign) => {
+    try {
+      await api.post(`/admin/campaigns/${c.id}/approve`);
+      setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "approved", state: "live" } : x)));
+    } catch { /* ignore */ }
+  };
+
+  const rejectCampaign = async (c: AdminCampaign) => {
+    Alert.prompt?.("Reject campaign", "Reason (optional):", async (reason?: string) => {
+      try {
+        await api.post(`/admin/campaigns/${c.id}/reject`, { reason: reason ?? "" });
+        setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "rejected", state: "rejected", rejected_reason: reason ?? "" } : x)));
+      } catch { /* ignore */ }
+    });
+    // Fallback for Android (Alert.prompt only on iOS)
+    if (!Alert.prompt) {
+      try {
+        await api.post(`/admin/campaigns/${c.id}/reject`, { reason: "" });
+        setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: "rejected", state: "rejected" } : x)));
+      } catch { /* ignore */ }
+    }
   };
 
   const updateEveryN = async (val: number) => {
@@ -156,18 +218,63 @@ export default function AdminPanel() {
                 <Text style={styles.userAlias}>{u.alias}</Text>
                 <Text style={styles.userEmail} numberOfLines={1}>{u.email}</Text>
               </View>
-              <View style={[styles.roleChip, u.role === "admin" && styles.roleChipAdmin, u.role === "advertiser" && styles.roleChipAdv]}>
+              <View style={[
+                styles.roleChip,
+                u.role === "admin" && styles.roleChipAdmin,
+                u.role === "advertiser" && styles.roleChipAdv,
+                u.role === "partner" && styles.roleChipPartner,
+              ]}>
                 <Text style={styles.roleText}>{u.role}</Text>
               </View>
               {u.role === "user" && (
-                <Pressable style={styles.promoteBtn} onPress={() => setRole(u, "advertiser")} testID={`promote-${u.id}`}>
-                  <Text style={styles.promoteText}>Make advertiser</Text>
-                </Pressable>
+                <View style={{ gap: 4 }}>
+                  <Pressable style={styles.promoteBtn} onPress={() => setRole(u, "advertiser")} testID={`promote-adv-${u.id}`}>
+                    <Text style={styles.promoteText}>Advertiser</Text>
+                  </Pressable>
+                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.success }]} onPress={() => setRole(u, "partner")} testID={`promote-partner-${u.id}`}>
+                    <Text style={styles.promoteText}>Partner</Text>
+                  </Pressable>
+                </View>
               )}
-              {u.role === "advertiser" && (
+              {(u.role === "advertiser" || u.role === "partner") && (
                 <Pressable style={[styles.promoteBtn, styles.demoteBtn]} onPress={() => setRole(u, "user")} testID={`demote-${u.id}`}>
                   <Text style={[styles.promoteText, { color: colors.error }]}>Revoke</Text>
                 </Pressable>
+              )}
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Campaign approvals ({campaigns.filter((c) => c.status === "pending").length} pending)</Text>
+          {campaigns.length === 0 && <Text style={styles.emptyText}>No campaigns submitted yet.</Text>}
+          {campaigns.map((c) => (
+            <View key={c.id} style={styles.campRow} testID={`admin-camp-${c.id}`}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.userAlias} numberOfLines={1}>{c.title}</Text>
+                <Text style={styles.userEmail} numberOfLines={1}>
+                  {c.partner?.business_name ?? c.partner?.alias ?? "?"} · {c.reward_type}
+                  {(c.reward_type === "points" || c.reward_type === "both") && ` · +${c.points_amount}pts`}
+                  {(c.reward_type === "discount" || c.reward_type === "both") && ` · ${c.discount_label}`}
+                </Text>
+                <Text style={styles.userEmail} numberOfLines={2}>{c.description}</Text>
+                {c.status === "rejected" && !!c.rejected_reason && (
+                  <Text style={[styles.userEmail, { color: colors.error }]}>Rejected: {c.rejected_reason}</Text>
+                )}
+              </View>
+              {c.status === "pending" ? (
+                <View style={{ gap: 4 }}>
+                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.success }]} onPress={() => approveCampaign(c)} testID={`approve-${c.id}`}>
+                    <Text style={styles.promoteText}>Approve</Text>
+                  </Pressable>
+                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.error }]} onPress={() => rejectCampaign(c)} testID={`reject-${c.id}`}>
+                    <Text style={styles.promoteText}>Reject</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={[styles.roleChip, c.status === "approved" && styles.roleChipAdv, c.status === "rejected" && { backgroundColor: "#FDE0E0" }]}>
+                  <Text style={styles.roleText}>{c.status}</Text>
+                </View>
               )}
             </View>
           ))}
@@ -194,6 +301,39 @@ export default function AdminPanel() {
           ))}
         </View>
       </ScrollView>
+
+      <Modal transparent visible={!!promotePartner} animationType="fade" onRequestClose={() => setPromotePartner(null)}>
+        <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Promote to Partner</Text>
+            <Text style={{ color: colors.muted, fontSize: font.sm }}>Add the business details for this partner:</Text>
+            <TextInput
+              value={promotePartner?.businessName ?? ""}
+              onChangeText={(v) => setPromotePartner((p) => (p ? { ...p, businessName: v } : p))}
+              placeholder="Business name (e.g. Huni Cafe)"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              testID="partner-business-name"
+            />
+            <TextInput
+              value={promotePartner?.businessType ?? ""}
+              onChangeText={(v) => setPromotePartner((p) => (p ? { ...p, businessType: v } : p))}
+              placeholder="Type (cafe, restaurant, event, ...)"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              testID="partner-business-type"
+            />
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable style={[styles.promoteBtn, styles.demoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center" }]} onPress={() => setPromotePartner(null)}>
+                <Text style={styles.promoteText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.promoteBtn, { flex: 1, paddingVertical: 12, alignItems: "center", backgroundColor: colors.success }]} onPress={confirmPartnerPromotion} testID="confirm-partner">
+                <Text style={styles.promoteText}>Promote</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -233,6 +373,7 @@ const styles = StyleSheet.create({
   },
   roleChipAdmin: { backgroundColor: "#FBE3C9" },
   roleChipAdv: { backgroundColor: colors.brandTertiary },
+  roleChipPartner: { backgroundColor: "#DDF3E2" },
   roleText: { fontSize: 10, fontWeight: "800", color: colors.onSurface, textTransform: "uppercase" },
   promoteBtn: {
     paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.brand,
@@ -240,5 +381,9 @@ const styles = StyleSheet.create({
   demoteBtn: { backgroundColor: colors.surfaceTertiary },
   promoteText: { color: "#FFF", fontWeight: "700", fontSize: 11 },
   adRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 6 },
+  campRow: { flexDirection: "row", gap: spacing.sm, paddingVertical: 8, alignItems: "flex-start", borderTopWidth: 1, borderTopColor: colors.divider },
   emptyText: { color: colors.muted, fontSize: font.sm },
+  modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", alignItems: "center", justifyContent: "center", padding: spacing.lg },
+  modalCard: { width: "100%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
+  modalTitle: { fontWeight: "800", fontSize: font.lg, color: colors.onSurface },
 });

@@ -58,6 +58,41 @@ export default function Settings() {
           <Row icon="mail-outline" label="Helpful score" value={String(user?.helpful_score ?? 0)} testID="acct-helpful" />
         </View>
 
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Rewards</Text>
+          <Pressable style={styles.navRow} onPress={() => router.push("/rewards")} testID="rewards-btn">
+            <Ionicons name="gift-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>My rewards & history</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
+          <Pressable style={styles.navRow} onPress={() => router.push("/perks")} testID="perks-btn">
+            <Ionicons name="pricetags-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>Browse local perks</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
+          <Pressable style={styles.navRow} onPress={() => router.push("/qr")} testID="my-qr-btn">
+            <Ionicons name="qr-code-outline" size={18} color={colors.brand} />
+            <Text style={styles.navLabel}>My QR code</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
+        </View>
+
+        {(user?.role === "partner" || user?.role === "admin") && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Partner</Text>
+            <Pressable style={styles.navRow} onPress={() => router.push("/partner")} testID="partner-hub-btn">
+              <Ionicons name="business-outline" size={18} color={colors.brand} />
+              <Text style={styles.navLabel}>Partner Hub</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+            </Pressable>
+            <Pressable style={styles.navRow} onPress={() => router.push("/partner/scan")} testID="partner-scan-shortcut">
+              <Ionicons name="qr-code-outline" size={18} color={colors.brand} />
+              <Text style={styles.navLabel}>Scan a user QR</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+            </Pressable>
+          </View>
+        )}
+
         {(user?.role === "advertiser" || user?.role === "admin") && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Monetization</Text>

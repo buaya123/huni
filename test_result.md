@@ -117,3 +117,147 @@
 - Ad comments reuse /api/posts/{ad_id}/comments; comments_enabled=false -> 403; ad owner/admin can DELETE any comment on their ad.
 - Frontend: AdCard (sponsored badge, business name, Learn more click-tracking, impression on mount), /ad/[id] detail w/ CommentsSection (extracted shared component, also used by post/[id]), /ads Ad Manager (list+toggle), /ads/create, /ads/[id] analytics (totals, bar chart, settings, delete), /admin panel (density, user roles, all ads), settings rows gated by role, notifications route is_ad -> /ad/{id}.
 - Backend flows verified via /tmp/test_ads.py — all passing. UI smoke: feed ad + Ad Manager verified.
+
+## Iteration 9 — Partner role + Campaigns + QR Redemption (July 2026)
+- New role `partner` (users.role enum now user|advertiser|partner|admin). `RoleUpdate` accepts partner + optional business_name/business_type.
+- users.points (int, default 0) + business_name/business_type surfaced via `public_user()`.
+- Campaigns model: {id, partner_id, title, description, reward_type[points|discount|both], points_amount, discount_label, terms, image_ids, start_date, end_date, status[pending|approved|rejected], enabled, redemption_count, rejected_reason}. `_campaign_status_effective` computes `state` (pending|live|paused|scheduled|expired|rejected) based on dates + toggles.
+- Redemptions collection: {id, campaign_id, user_id, partner_id, points_awarded, discount_applied, redeemed_at} with unique compound index on (campaign_id, user_id) → 1-per-user-per-campaign.
+- Partner endpoints: POST/GET/PATCH/DELETE /api/partner/campaigns[/id]; POST /api/partner/scan (parses "huni:user:<id>" | "huni://user/<id>" | JSON | raw id, returns user + partner's live campaigns w/ already_redeemed flag); POST /api/partner/redeem (409 on duplicate); GET /api/partner/redemptions.
+- Public endpoints: GET /api/campaigns (live campaigns for perks discovery), GET /api/campaigns/{id}, GET /api/me/points, GET /api/me/redemptions.
+- Admin endpoints: GET /api/admin/campaigns?status=[pending|approved|rejected|all], POST /api/admin/campaigns/{id}/approve, POST /api/admin/campaigns/{id}/reject (with reason). Approval/rejection notifies partner via db.notifications + WS. Editing a campaign as partner resets it to `pending` status.
+- Frontend: /qr (profile QR w/ share, points, links to /rewards & /perks), /perks + /perks/[id] (user-facing catalog), /rewards (points card + history), /partner (hub w/ campaigns list + stats + Scan/New CTA), /partner/campaigns/create + /[id] (edit/toggle/delete), /partner/scan (expo-camera QR scanner + manual entry modal + apply campaign inline), /partner/redemptions (partner log). Profile screen now shows QR icon on banner + points pill + Perks pill. Settings adds Rewards + Partner sections gated by role. Admin panel adds Campaign approvals + Make partner (with business info modal).
+- New deps: qrcode (data-url QR gen), expo-camera (~17.0.10). Camera permission declared in app.json for iOS/Android.
+- Firebase-admin init made lazy (skips if serviceAccountKey.json absent) so backend boots without that file.
+- Backend flow test (curl script): seed → login admin/partner/user → promote to partner → create campaign → admin approve → public list → scan user QR → redeem (200) → repeat redeem (409) → user points=50, 1 redemption. All PASS (bugfix: strip _id from redemption doc before returning).
+
+
+## Test tracking (Iteration 9)
+
+backend:
+  - task: "Partner role + admin promotion with business info"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added `partner` to RoleUpdate; POST /api/admin/users/{id}/role accepts role=partner + optional business_name/business_type. Verified promoting demo2 → partner via curl."
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested admin promotion flow: (1) Admin successfully promoted demo2 to partner with business_name='Test Cafe' and business_type='cafe', (2) Verified via GET /auth/me that demo2 has role=partner with correct business info, (3) Non-admin correctly blocked with 403. All role guards working correctly."
+  - task: "Campaign CRUD + status flow (partner)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST/GET/PATCH/DELETE /api/partner/campaigns[/id]. Editing content resets status → pending. Requires partner or admin role."
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested campaign CRUD: (1) Partner created 3 campaigns (points, discount, both) all with status=pending, (2) Validation working: points_amount=0 rejected with 422, empty discount_label rejected with 422, (3) Regular user blocked from creating campaigns with 403, (4) Partner editing campaign title correctly reset status to pending, (5) Toggling enabled did NOT reset status (remained approved). All flows working correctly."
+  - task: "Admin campaign approval + rejection"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/admin/campaigns/{id}/approve|reject. Notifies partner via db.notifications + WS. GET /api/admin/campaigns?status=pending|approved|rejected|all."
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested admin approval flow: (1) GET /admin/campaigns?status=pending returned 3 pending campaigns, (2) Admin approved 2 campaigns (status=approved, state=live), (3) Admin rejected 1 campaign with reason, (4) Partner received 4 notifications (approvals + rejection), (5) Non-admin correctly blocked with 403. All approval/rejection flows and notifications working correctly."
+  - task: "Partner QR scan + redeem (1-per-user-per-campaign)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/partner/scan parses huni:user:<id>|huni://user/<id>|JSON|raw. POST /api/partner/redeem awards points + records discount + increments user.points + notifies user. Unique index (campaign_id,user_id) → 409 on duplicate. Bugfix: pop _id from redemption doc."
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested scan + redeem flow: (1) Partner scan with 'huni:user:<id>' format resolved user and returned 3 live campaigns, (2) All code formats work: huni://user/<id>, raw UUID, JSON, (3) Bad code correctly returns 404, (4) Redemption awarded 25 points (50→75), (5) User points correctly updated, (6) Redemption record created, (7) Campaign redemption_count incremented, (8) Duplicate redemption correctly blocked with 409, (9) Cannot redeem rejected campaign (400). All scan and redemption flows working correctly."
+  - task: "User-facing perks + points + redemption history"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /api/campaigns (live only, filtered by dates), GET /api/campaigns/{id}, GET /api/me/points, GET /api/me/redemptions."
+      - working: true
+        agent: "testing"
+        comment: "✅ PASS - Tested user-facing endpoints: (1) GET /campaigns returned only approved campaigns (3 approved, 0 rejected, 0 pending), (2) GET /me/points returned correct points (75) and redemption count (2), (3) GET /me/redemptions returned list of 2 redemptions. All user-facing endpoints working correctly."
+
+frontend:
+  - task: "Profile QR + points pill + entry to /perks and /rewards"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/profile.tsx, frontend/app/qr.tsx, frontend/src/components/ProfileQR.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Profile banner shows QR icon (→ /qr) + Settings icon. Profile card shows points pill + Perks pill. /qr renders a QR data URL (qrcode pkg) encoding huni:user:<id> with Share button."
+  - task: "Partner Hub + campaign create/edit/scan/log"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/partner/*"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "/partner (hub), /partner/campaigns/create (wizard), /partner/campaigns/[id] (edit/toggle/delete), /partner/scan (expo-camera QR + manual code modal), /partner/redemptions."
+  - task: "Admin panel — partner promotion + campaign approvals"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/admin.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Users list now supports Partner promotion (with business_name/type modal). New Campaign approvals section with Approve/Reject buttons."
+
+metadata:
+  test_sequence: 9
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Partner role + admin promotion with business info"
+    - "Campaign CRUD + status flow (partner)"
+    - "Admin campaign approval + rejection"
+    - "Partner QR scan + redeem (1-per-user-per-campaign)"
+    - "User-facing perks + points + redemption history"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Iteration 9 backend complete. Added partner role, campaigns collection, redemptions collection (unique compound index), 15+ new endpoints, admin approval workflow. Verified end-to-end curl flow. Please run backend tests focused on: (1) admin promoting user→partner with business info, (2) partner creating a campaign → pending status, (3) admin approving/rejecting + notification created, (4) partner scanning huni:user:<id> QR resolves and lists only that partner's live campaigns, (5) redeem awards points + is idempotent (409 on repeat), (6) user reads /me/points and /me/redemptions correctly, (7) role guards (non-partner cannot create campaigns; non-admin cannot approve). Test credentials in /app/memory/test_credentials.md."
+  - agent: "testing"
+    message: "✅ ALL BACKEND TESTS PASSED (11/11) - Iteration 9 backend is fully functional. Tested all flows: (1) Admin promotion to partner with business info ✓, (2) Partner campaign creation with all reward types + validation ✓, (3) Admin approval/rejection with notifications ✓, (4) Public campaigns feed (only approved) ✓, (5) Partner scan with all code formats ✓, (6) Redemption flow with points, duplicate prevention (409), role guards ✓, (7) User points & history ✓, (8) Partner editing resets to pending ✓, (9) All role guards working ✓. No issues found. Backend ready for production."

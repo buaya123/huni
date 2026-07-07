@@ -17,7 +17,10 @@ export type User = {
   birthdate?: string;
   picture?: string;
   auth_provider?: "password" | "google";
-  role?: "user" | "advertiser" | "admin";
+  role?: "user" | "advertiser" | "partner" | "admin";
+  points?: number;
+  business_name?: string;
+  business_type?: string;
 };
 
 export type SignUpInput = {

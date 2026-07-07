@@ -84,6 +84,14 @@ export default function Profile() {
       >
         <View style={styles.banner}>
           <Pressable
+            style={styles.qrBtn}
+            onPress={() => router.push("/qr")}
+            testID="qr-btn"
+            hitSlop={8}
+          >
+            <Ionicons name="qr-code-outline" size={22} color="#FFF" />
+          </Pressable>
+          <Pressable
             style={styles.settingsBtn}
             onPress={() => router.push("/settings")}
             testID="settings-btn"
@@ -96,6 +104,17 @@ export default function Profile() {
           <Avatar alias={user.alias} size={72} />
           <Text style={styles.alias} testID="profile-alias">{user.alias}</Text>
           <Text style={styles.joined}>Joined {joined}</Text>
+
+          <View style={styles.rewardsRow}>
+            <Pressable style={styles.rewardsPill} onPress={() => router.push("/rewards")} testID="rewards-pill">
+              <Ionicons name="sparkles" size={14} color={colors.onBrandTertiary} />
+              <Text style={styles.rewardsText}>{user.points ?? 0} pts</Text>
+            </Pressable>
+            <Pressable style={styles.perksPill} onPress={() => router.push("/perks")} testID="perks-pill">
+              <Ionicons name="pricetags-outline" size={14} color={colors.brand} />
+              <Text style={styles.perksText}>Perks</Text>
+            </Pressable>
+          </View>
 
           {editingBio ? (
             <View style={{ width: "100%", gap: spacing.sm }}>
@@ -216,6 +235,7 @@ function Stat({ label, value }: { label: string; value: number }) {
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.surface },
   banner: { height: 100, backgroundColor: colors.brand, position: "relative" },
+  qrBtn: { position: "absolute", top: 12, right: 60, padding: 8 },
   settingsBtn: { position: "absolute", top: 12, right: 16, padding: 8 },
   headerCard: {
     marginHorizontal: spacing.lg,
@@ -243,6 +263,11 @@ const styles = StyleSheet.create({
   },
   regenText: { color: colors.onBrandTertiary, fontSize: font.sm, fontWeight: "600" },
   regenNote: { fontSize: font.sm, color: colors.muted, marginTop: 4 },
+  rewardsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  rewardsPill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.brandTertiary },
+  rewardsText: { color: colors.onBrandTertiary, fontWeight: "800", fontSize: font.sm },
+  perksPill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
+  perksText: { color: colors.brand, fontWeight: "800", fontSize: font.sm },
   smallBtn: {
     backgroundColor: colors.brand, borderRadius: radius.pill,
     paddingHorizontal: spacing.lg, paddingVertical: 8,

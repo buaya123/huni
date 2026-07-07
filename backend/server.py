@@ -58,10 +58,15 @@ EMERGENT_SESSION_URL = os.environ.get(
 FIREBASE_KEY = Path(__file__).parent / "serviceAccountKey.json"
 
 if not firebase_admin._apps:
-    cred = credentials.Certificate(str(FIREBASE_KEY))
-    firebase_admin.initialize_app(cred)
-
-print("🔥 Firebase Admin initialized")
+    if FIREBASE_KEY.exists():
+        try:
+            cred = credentials.Certificate(str(FIREBASE_KEY))
+            firebase_admin.initialize_app(cred)
+            print("🔥 Firebase Admin initialized")
+        except Exception as _e:
+            print(f"⚠️ Firebase Admin init skipped: {_e}")
+    else:
+        print("⚠️ Firebase Admin skipped (serviceAccountKey.json not found)")
 
 GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
@@ -262,7 +267,48 @@ class AdUpdate(BaseModel):
 
 
 class RoleUpdate(BaseModel):
-    role: str = Field(pattern="^(user|advertiser)$")
+    role: str = Field(pattern="^(user|advertiser|partner)$")
+    business_name: Optional[str] = Field(default=None, max_length=80)
+    business_type: Optional[str] = Field(default=None, max_length=60)
+
+
+class CampaignCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=80)
+    description: str = Field(min_length=2, max_length=1000)
+    reward_type: str = Field(pattern="^(points|discount|both)$")
+    points_amount: int = Field(default=0, ge=0, le=10000)
+    discount_label: str = Field(default="", max_length=80)  # e.g. "10% off any drink"
+    terms: str = Field(default="", max_length=500)
+    image_ids: Optional[List[str]] = None
+    start_date: Optional[str] = Field(default=None, max_length=10)  # YYYY-MM-DD
+    end_date: Optional[str] = Field(default=None, max_length=10)
+
+
+class CampaignUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    description: Optional[str] = Field(default=None, min_length=2, max_length=1000)
+    reward_type: Optional[str] = Field(default=None, pattern="^(points|discount|both)$")
+    points_amount: Optional[int] = Field(default=None, ge=0, le=10000)
+    discount_label: Optional[str] = Field(default=None, max_length=80)
+    terms: Optional[str] = Field(default=None, max_length=500)
+    image_ids: Optional[List[str]] = None
+    start_date: Optional[str] = Field(default=None, max_length=10)
+    end_date: Optional[str] = Field(default=None, max_length=10)
+    enabled: Optional[bool] = None
+
+
+class CampaignRejectIn(BaseModel):
+    reason: str = Field(default="", max_length=300)
+
+
+class PartnerScanIn(BaseModel):
+    code: str = Field(min_length=1, max_length=500)  # QR payload — "huni:user:<id>" or just user id
+
+
+class PartnerRedeemIn(BaseModel):
+    campaign_id: str
+    user_id: str
+    note: Optional[str] = Field(default=None, max_length=200)
 
 
 class AdSettingsIn(BaseModel):
@@ -319,6 +365,9 @@ def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
         "picture": u.get("picture", ""),
         "auth_provider": u.get("auth_provider", "password"),
         "role": u.get("role", "user"),
+        "points": u.get("points", 0),
+        "business_name": u.get("business_name", ""),
+        "business_type": u.get("business_type", ""),
     }
 
 
@@ -1045,7 +1094,13 @@ async def admin_set_role(user_id: str, inp: RoleUpdate, user: Dict[str, Any] = D
         raise HTTPException(status_code=404, detail="User not found")
     if target.get("role") == "admin":
         raise HTTPException(status_code=400, detail="Cannot change an admin's role")
-    await db.users.update_one({"id": user_id}, {"$set": {"role": inp.role}})
+    updates: Dict[str, Any] = {"role": inp.role}
+    if inp.role == "partner":
+        if inp.business_name:
+            updates["business_name"] = inp.business_name.strip()
+        if inp.business_type:
+            updates["business_type"] = inp.business_type.strip()
+    await db.users.update_one({"id": user_id}, {"$set": updates})
     return {"status": "ok", "role": inp.role}
 
 
@@ -1077,6 +1132,371 @@ async def admin_update_settings(inp: AdSettingsIn, user: Dict[str, Any] = Depend
         {"key": "ads"}, {"$set": {"ad_every_n_posts": inp.ad_every_n_posts}}, upsert=True
     )
     return {"ad_every_n_posts": inp.ad_every_n_posts}
+
+
+# ---------- routes: campaigns (partner + admin + public) ----------
+def _campaign_status_effective(c: Dict[str, Any]) -> str:
+    """Compute display status based on stored status + dates."""
+    if c.get("status") != "approved":
+        return c.get("status", "pending")
+    if not c.get("enabled", True):
+        return "paused"
+    today = now().date().isoformat()
+    ed = c.get("end_date")
+    sd = c.get("start_date")
+    if ed and today > ed:
+        return "expired"
+    if sd and today < sd:
+        return "scheduled"
+    return "live"
+
+
+def _hydrate_campaign(c: Dict[str, Any], partner: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return {
+        "id": c["id"],
+        "partner_id": c["partner_id"],
+        "partner": {
+            "id": partner["id"],
+            "alias": partner.get("alias", ""),
+            "business_name": partner.get("business_name") or partner.get("alias", ""),
+            "business_type": partner.get("business_type", ""),
+        } if partner else None,
+        "title": c["title"],
+        "description": c["description"],
+        "reward_type": c["reward_type"],
+        "points_amount": c.get("points_amount", 0),
+        "discount_label": c.get("discount_label", ""),
+        "terms": c.get("terms", ""),
+        "images": c.get("image_ids", []) or [],
+        "start_date": c.get("start_date"),
+        "end_date": c.get("end_date"),
+        "status": c.get("status", "pending"),
+        "state": _campaign_status_effective(c),
+        "enabled": c.get("enabled", True),
+        "rejected_reason": c.get("rejected_reason"),
+        "approved_at": c.get("approved_at"),
+        "redemption_count": c.get("redemption_count", 0),
+        "created_at": c["created_at"],
+    }
+
+
+async def _load_campaign_with_partner(c: Dict[str, Any]) -> Dict[str, Any]:
+    partner = await db.users.find_one({"id": c["partner_id"]}, {"_id": 0, "password": 0})
+    return _hydrate_campaign(c, partner)
+
+
+@api.post("/partner/campaigns")
+async def partner_create_campaign(inp: CampaignCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "partner", "admin")
+    if inp.reward_type in ("points", "both") and inp.points_amount <= 0:
+        raise HTTPException(status_code=422, detail="Points reward needs a positive points_amount")
+    if inp.reward_type in ("discount", "both") and not inp.discount_label.strip():
+        raise HTTPException(status_code=422, detail="Discount reward needs a discount_label")
+    doc = {
+        "id": new_id(),
+        "partner_id": user["id"],
+        "title": inp.title.strip(),
+        "description": inp.description.strip(),
+        "reward_type": inp.reward_type,
+        "points_amount": inp.points_amount if inp.reward_type in ("points", "both") else 0,
+        "discount_label": inp.discount_label.strip() if inp.reward_type in ("discount", "both") else "",
+        "terms": inp.terms.strip(),
+        "image_ids": (inp.image_ids or [])[:4],
+        "start_date": (inp.start_date or "").strip() or None,
+        "end_date": (inp.end_date or "").strip() or None,
+        "status": "pending",  # admin approves
+        "enabled": True,
+        "redemption_count": 0,
+        "created_at": now().isoformat(),
+    }
+    await db.campaigns.insert_one(doc)
+    return await _load_campaign_with_partner(doc)
+
+
+@api.get("/partner/campaigns")
+async def partner_my_campaigns(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    require_role(user, "partner", "admin")
+    rows = await db.campaigns.find({"partner_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return [_hydrate_campaign(c, user) for c in rows]
+
+
+@api.get("/partner/campaigns/{campaign_id}")
+async def partner_get_campaign(campaign_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "partner", "admin")
+    c = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if c["partner_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    return await _load_campaign_with_partner(c)
+
+
+@api.patch("/partner/campaigns/{campaign_id}")
+async def partner_update_campaign(campaign_id: str, inp: CampaignUpdate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "partner", "admin")
+    c = await db.campaigns.find_one({"id": campaign_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if c["partner_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    updates: Dict[str, Any] = {}
+    for f in ("title", "description", "reward_type", "points_amount", "discount_label", "terms", "start_date", "end_date", "enabled"):
+        v = getattr(inp, f)
+        if v is None:
+            continue
+        updates[f] = v.strip() if isinstance(v, str) else v
+    if inp.image_ids is not None:
+        updates["image_ids"] = inp.image_ids[:4]
+    # If a partner edits content (not just toggles enabled), reset to pending
+    content_edited = any(k in updates for k in ("title", "description", "reward_type", "points_amount", "discount_label", "terms", "start_date", "end_date"))
+    if content_edited and user.get("role") != "admin":
+        updates["status"] = "pending"
+        updates["rejected_reason"] = None
+        updates["approved_at"] = None
+    if updates:
+        await db.campaigns.update_one({"id": campaign_id}, {"$set": updates})
+        c.update(updates)
+    return await _load_campaign_with_partner(c)
+
+
+@api.delete("/partner/campaigns/{campaign_id}")
+async def partner_delete_campaign(campaign_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+    require_role(user, "partner", "admin")
+    c = await db.campaigns.find_one({"id": campaign_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if c["partner_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.campaigns.delete_one({"id": campaign_id})
+    return {"status": "ok"}
+
+
+def _parse_qr_code(code: str) -> str:
+    """Accept 'huni:user:<id>' | 'huni://user/<id>' | JSON {'user_id':...} | raw id."""
+    c = code.strip()
+    if c.startswith("huni:user:"):
+        return c.split("huni:user:", 1)[1].strip()
+    if c.startswith("huni://user/"):
+        return c.split("huni://user/", 1)[1].strip().split("?")[0]
+    if c.startswith("{"):
+        try:
+            import json
+            obj = json.loads(c)
+            if isinstance(obj, dict) and obj.get("user_id"):
+                return str(obj["user_id"])
+        except Exception:
+            pass
+    return c
+
+
+@api.post("/partner/scan")
+async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Resolve a scanned QR to a user + list the partner's live campaigns and eligibility."""
+    require_role(user, "partner", "admin")
+    target_id = _parse_qr_code(inp.code)
+    target = await db.users.find_one({"id": target_id}, {"_id": 0, "password": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="No user matches this code")
+    rows = await db.campaigns.find({"partner_id": user["id"], "status": "approved"}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    today = now().date().isoformat()
+    live: List[Dict[str, Any]] = []
+    for c in rows:
+        if not c.get("enabled", True):
+            continue
+        if c.get("start_date") and today < c["start_date"]:
+            continue
+        if c.get("end_date") and today > c["end_date"]:
+            continue
+        already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": target_id})
+        item = _hydrate_campaign(c, user)
+        item["already_redeemed"] = bool(already)
+        live.append(item)
+    return {"user": public_user(target), "campaigns": live}
+
+
+@api.post("/partner/redeem")
+async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Apply a campaign to a user (one-shot per user per campaign)."""
+    require_role(user, "partner", "admin")
+    c = await db.campaigns.find_one({"id": inp.campaign_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if c["partner_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not your campaign")
+    if c.get("status") != "approved" or not c.get("enabled", True):
+        raise HTTPException(status_code=400, detail="Campaign is not live")
+    today = now().date().isoformat()
+    if c.get("start_date") and today < c["start_date"]:
+        raise HTTPException(status_code=400, detail="Campaign has not started yet")
+    if c.get("end_date") and today > c["end_date"]:
+        raise HTTPException(status_code=400, detail="Campaign has expired")
+    target = await db.users.find_one({"id": inp.user_id}, {"_id": 0, "password": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    existing = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": inp.user_id})
+    if existing:
+        raise HTTPException(status_code=409, detail="This user has already redeemed this campaign")
+    points_award = c.get("points_amount", 0) if c["reward_type"] in ("points", "both") else 0
+    discount_label = c.get("discount_label", "") if c["reward_type"] in ("discount", "both") else ""
+    r_doc = {
+        "id": new_id(),
+        "campaign_id": c["id"],
+        "campaign_title": c["title"],
+        "partner_id": user["id"],
+        "partner_business_name": user.get("business_name") or user.get("alias", ""),
+        "user_id": inp.user_id,
+        "user_alias": target.get("alias", ""),
+        "points_awarded": points_award,
+        "discount_applied": discount_label,
+        "note": (inp.note or "").strip() or None,
+        "redeemed_at": now().isoformat(),
+    }
+    await db.redemptions.insert_one(r_doc)
+    r_doc.pop("_id", None)
+    if points_award > 0:
+        await db.users.update_one({"id": inp.user_id}, {"$inc": {"points": points_award}})
+    await db.campaigns.update_one({"id": c["id"]}, {"$inc": {"redemption_count": 1}})
+    # notify the user
+    await db.notifications.insert_one({
+        "id": new_id(),
+        "user_id": inp.user_id,
+        "type": "reward",
+        "actor_alias": user.get("business_name") or user.get("alias", ""),
+        "campaign_id": c["id"],
+        "content_preview": f"🎉 {c['title']} · " + (f"+{points_award} pts" if points_award else discount_label),
+        "created_at": now().isoformat(),
+        "read": False,
+    })
+    await ws_manager.send_to(inp.user_id, {"type": "notification"})
+    return {"status": "ok", "redemption": r_doc, "user_new_points": (target.get("points", 0) + points_award)}
+
+
+@api.get("/partner/redemptions")
+async def partner_redemptions(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    require_role(user, "partner", "admin")
+    rows = await db.redemptions.find({"partner_id": user["id"]}, {"_id": 0}).sort("redeemed_at", -1).limit(200).to_list(200)
+    return rows
+
+
+# ---------- public campaigns (users browse deals) ----------
+@api.get("/campaigns")
+async def list_active_campaigns(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    rows = await db.campaigns.find({"status": "approved", "enabled": True}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    today = now().date().isoformat()
+    out: List[Dict[str, Any]] = []
+    partners_cache: Dict[str, Dict[str, Any]] = {}
+    for c in rows:
+        if c.get("end_date") and today > c["end_date"]:
+            continue
+        if c.get("start_date") and today < c["start_date"]:
+            continue
+        p = partners_cache.get(c["partner_id"])
+        if not p:
+            p = await db.users.find_one({"id": c["partner_id"]}, {"_id": 0, "password": 0})
+            if p:
+                partners_cache[c["partner_id"]] = p
+        item = _hydrate_campaign(c, p)
+        already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": user["id"]})
+        item["already_redeemed"] = bool(already)
+        out.append(item)
+    return out
+
+
+@api.get("/campaigns/{campaign_id}")
+async def get_campaign_public(campaign_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    c = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    p = await db.users.find_one({"id": c["partner_id"]}, {"_id": 0, "password": 0})
+    item = _hydrate_campaign(c, p)
+    already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": user["id"]})
+    item["already_redeemed"] = bool(already)
+    return item
+
+
+# ---------- user points + redemptions ----------
+@api.get("/me/points")
+async def my_points(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "points": 1})
+    redemption_count = await db.redemptions.count_documents({"user_id": user["id"]})
+    return {"points": (fresh or {}).get("points", 0), "redemptions": redemption_count}
+
+
+@api.get("/me/redemptions")
+async def my_redemptions(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    rows = await db.redemptions.find({"user_id": user["id"]}, {"_id": 0}).sort("redeemed_at", -1).limit(100).to_list(100)
+    return rows
+
+
+# ---------- admin: campaigns ----------
+@api.get("/admin/campaigns")
+async def admin_list_campaigns(
+    status_filter: str = Query(default="all", alias="status"),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    require_role(user, "admin")
+    q: Dict[str, Any] = {}
+    if status_filter in ("pending", "approved", "rejected"):
+        q["status"] = status_filter
+    rows = await db.campaigns.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    out = []
+    for c in rows:
+        p = await db.users.find_one({"id": c["partner_id"]}, {"_id": 0, "password": 0})
+        out.append(_hydrate_campaign(c, p))
+    return out
+
+
+@api.post("/admin/campaigns/{campaign_id}/approve")
+async def admin_approve_campaign(campaign_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    c = await db.campaigns.find_one({"id": campaign_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    await db.campaigns.update_one(
+        {"id": campaign_id},
+        {"$set": {"status": "approved", "approved_at": now().isoformat(), "approved_by": user["id"], "rejected_reason": None}},
+    )
+    # notify partner
+    await db.notifications.insert_one({
+        "id": new_id(),
+        "user_id": c["partner_id"],
+        "type": "campaign_approved",
+        "actor_alias": "Huni Admin",
+        "campaign_id": campaign_id,
+        "content_preview": f"✅ '{c['title']}' is now live",
+        "created_at": now().isoformat(),
+        "read": False,
+    })
+    await ws_manager.send_to(c["partner_id"], {"type": "notification"})
+    c["status"] = "approved"
+    return await _load_campaign_with_partner(c)
+
+
+@api.post("/admin/campaigns/{campaign_id}/reject")
+async def admin_reject_campaign(campaign_id: str, inp: CampaignRejectIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    require_role(user, "admin")
+    c = await db.campaigns.find_one({"id": campaign_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    reason = inp.reason.strip() or "Does not meet guidelines"
+    await db.campaigns.update_one(
+        {"id": campaign_id},
+        {"$set": {"status": "rejected", "rejected_reason": reason, "approved_at": None}},
+    )
+    await db.notifications.insert_one({
+        "id": new_id(),
+        "user_id": c["partner_id"],
+        "type": "campaign_rejected",
+        "actor_alias": "Huni Admin",
+        "campaign_id": campaign_id,
+        "content_preview": f"❌ '{c['title']}' — {reason}",
+        "created_at": now().isoformat(),
+        "read": False,
+    })
+    await ws_manager.send_to(c["partner_id"], {"type": "notification"})
+    c["status"] = "rejected"
+    c["rejected_reason"] = reason
+    return await _load_campaign_with_partner(c)
 
 
 # ---------- routes: comments ----------
@@ -1675,6 +2095,13 @@ async def on_startup() -> None:
     await db.ads.create_index("id")
     await db.ad_events.create_index([("ad_id", 1), ("type", 1)])
     await db.ad_events.create_index([("ad_id", 1), ("created_at", -1)])
+    await db.campaigns.create_index("id", unique=True)
+    await db.campaigns.create_index([("partner_id", 1), ("created_at", -1)])
+    await db.campaigns.create_index("status")
+    await db.redemptions.create_index("id", unique=True)
+    await db.redemptions.create_index([("campaign_id", 1), ("user_id", 1)], unique=True)
+    await db.redemptions.create_index([("user_id", 1), ("redeemed_at", -1)])
+    await db.redemptions.create_index([("partner_id", 1), ("redeemed_at", -1)])
     # promote configured admin emails
     if ADMIN_EMAILS:
         await db.users.update_many(

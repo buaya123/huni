@@ -23,6 +23,7 @@ export default function Profile() {
   const [editingBio, setEditingBio] = useState(false);
   const [bio, setBio] = useState("");
   const [regenNote, setRegenNote] = useState<string | null>(null);
+  const [scannerPartners, setScannerPartners] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -33,6 +34,14 @@ export default function Profile() {
       ]);
       setPosts(ps);
       setCommented(cps);
+      try {
+          const partners = await api.get<any[]>("/scanner/partners");
+          console.log("SCANNER PARTNERS:", partners);
+          setScannerPartners(partners);
+      } catch (e) {
+          console.log("SCANNER ERROR:", e);
+          setScannerPartners([]);
+      }
     } catch {
       setPosts([]);
       setCommented([]);
@@ -114,6 +123,24 @@ export default function Profile() {
               <Ionicons name="cash-outline" size={14} color={colors.brand} />
               <Text style={styles.perksText}>{(user.tokens ?? 0).toLocaleString()} tokens</Text>
             </Pressable>
+            {
+            scannerPartners.length > 0 && (
+
+            <Pressable
+                style={styles.perksPill}
+                onPress={() => router.push("/partner/select")}
+            >
+                <Ionicons
+                    name="qr-code-outline"
+                    size={14}
+                    color={colors.brand}
+                />
+                <Text style={styles.perksText}>
+                    Scanner
+                </Text>
+            </Pressable>
+            )
+            }
           </View>
           {!!user.rank_title && (
             <Text style={styles.rankTitleLabel}>{user.rank_title}</Text>

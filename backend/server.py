@@ -1464,12 +1464,20 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
     """Resolve a scanned QR to a user + list the partner's live campaigns and eligibility."""
     partner = user
 
-    if user.get("role") == "user":
-        partner = await get_partner_for_user(user["id"],inp.partner_id)
+    if inp.partner_id:
+        partner = await db.users.find_one(
+            {
+                "id": inp.partner_id,
+                "scanners.user_id": user["id"],
+            },
+            {
+                "_id": 0,
+            },
+        )
         if not partner:
             raise HTTPException(
                 status_code=403,
-                detail="Not allowed"
+                detail="Not allowed",
             )
     else:
         require_role(user, "partner", "admin")
@@ -1511,12 +1519,21 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
 async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Apply a campaign to a user (one-shot per user per campaign)."""
     partner = user
-    if user.get("role") == "user":
-        partner = await get_partner_for_user(user["id"], inp.partner_id)
+
+    if inp.partner_id:
+        partner = await db.users.find_one(
+            {
+                "id": inp.partner_id,
+                "scanners.user_id": user["id"],
+            },
+            {
+                "_id": 0,
+            },
+        )
         if not partner:
             raise HTTPException(
                 status_code=403,
-                detail="Not allowed"
+                detail="Not allowed",
             )
     else:
         require_role(user, "partner", "admin")
@@ -1717,24 +1734,57 @@ async def partner_add_scanner(
     return {"status": "ok"}
 
 
+# @api.get("/scanner/partners")
+# async def scanner_partners(user: Dict[str, Any] = Depends(get_current_user),):
+#     rows = await db.users.find(
+#         {
+#             "scanners.user_id": user["id"],
+#         },
+#         {
+#             "_id": 0,
+#             "id": 1,
+#             "business_name": 1,
+#             "alias": 1,
+#         },
+#     ).to_list(50)
+#     return [
+#         {
+#             "id": r["id"],
+#             "business_name": r.get("business_name") or r.get("alias"),
+#         }
+#         for r in rows
+#     ]
+
 @api.get("/scanner/partners")
 async def scanner_partners(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
 
-    rows = await db.users.find(
+    partners = await db.users.find(
         {
-            "role": "partner",
             "scanners.user_id": user["id"],
         },
         {
             "_id": 0,
             "id": 1,
+            "alias": 1,
             "business_name": 1,
+            "role": 1,
+            "scanners": 1,
         },
     ).to_list(50)
 
-    return rows
+    print("========== SCANNER PARTNERS ==========")
+    print(partners)
+    print("======================================")
+
+    return [
+        {
+            "id": p["id"],
+            "business_name": p.get("business_name") or p.get("alias") or "Partner",
+        }
+        for p in partners
+    ]
 
 @api.delete("/partner/scanners/{scanner_id}")
 async def partner_remove_scanner(scanner_id: str,user: Dict[str, Any] = Depends(get_current_user),):

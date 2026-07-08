@@ -304,7 +304,7 @@ class CampaignRejectIn(BaseModel):
 #     code: str = Field(min_length=1, max_length=500)  # QR payload — "huni:user:<id>" or just user id
 
 class PartnerScanIn(BaseModel):
-    qr: str
+    code: str
     partner_id: str | None = None
 
 class PartnerRedeemIn(BaseModel):
@@ -1645,11 +1645,7 @@ async def partner_scanners(user: Dict[str, Any] = Depends(get_current_user)):
             "scanners": 1
         }
     )
-    if target["id"] == user["id"]:
-        raise HTTPException(
-            400,
-            "You cannot assign yourself."
-        )
+
 
     return partner.get("scanners", [])
 
@@ -1663,24 +1659,26 @@ async def partner_add_scanner(
     require_role(user, "partner", "admin")
 
     target = await db.users.find_one(
-        {
-            "id": inp.user_id
-        },
-        {
-            "_id": 0,
-            "id": 1,
-            "username": 1,
-            "display_name": 1,
-            "avatar": 1,
-            "role": 1,
-        }
-    )
+    {
+        "id": inp.user_id
+    },
+    {
+        "_id": 0,
+        "id": 1,
+        "alias": 1,
+        "picture": 1,
+        "role": 1,
+    }
+)
 
     if not target:
         raise HTTPException(404, "User not found")
 
-    if target["role"] != "user":
-        raise HTTPException(400, "Only users can become scanners")
+    if target.get("role", "user") not in ["user", "partner"]:
+        raise HTTPException(
+            400,
+            "Only normal users can become scanners."
+    )
 
     if target.get("status") == "banned":
         raise HTTPException(
@@ -1706,11 +1704,11 @@ async def partner_add_scanner(
             "$push": {
                 "scanners": {
                     "user_id": target["id"],
-                    "username": target.get("username"),
-                    "display_name": target.get("display_name"),
-                    "avatar": target.get("avatar"),
+                    "username": target.get("alias", ""),
+                    "display_name": target.get("alias", ""),
+                    "avatar": target.get("picture", ""),
                     "assigned_at": now().isoformat(),
-                    "active": True
+                    "active": True,
                 }
             }
         }

@@ -46,6 +46,7 @@ export default function PartnerScan() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [redeeming, setRedeeming] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(true);
 
   useEffect(() => {
     if (!permission || permission.granted) return;
@@ -108,16 +109,27 @@ export default function PartnerScan() {
 
 };
 
-  const onBarCode = ({ data }: { data: string }) => {
-    if (scannedRef.current || busy) return;
-    scannedRef.current = true;
-    doScan(data);
-  };
+const onBarCode = ({ data }: { data: string }) => {
 
-  const rescan = () => {
+    if (scannedRef.current || busy || !cameraEnabled) return;
+
+    scannedRef.current = true;
+
+    setCameraEnabled(false);
+
+    doScan(data);
+
+};
+
+const rescan = () => {
+
     scannedRef.current = false;
+
+    setCameraEnabled(true);
+
     setResult(null);
-  };
+
+};
 
   const doRedeem = async (c: Campaign) => {
     if (!result || redeeming) return;
@@ -125,9 +137,14 @@ export default function PartnerScan() {
     try {
       await api.post("/partner/redeem",{campaign_id:c.id,user_id:result.user.id,partner_id,},);
       Alert.alert(
-        "Redeemed",
-        `${c.title} applied to ${result.user.alias}.`,
-        [{ text: "Scan another", onPress: rescan }],
+          "Success",
+          `${c.title} applied successfully.`,
+          [
+              {
+                  text: "OK",
+                  onPress: () => router.replace("/(tabs)/profile"),
+              },
+          ],
       );
     } catch (e) {
       Alert.alert("Could not redeem", e instanceof Error ? e.message : "Unknown error");
@@ -173,12 +190,18 @@ export default function PartnerScan() {
             </View>
           ) : (
             <>
-              <CameraView
-                style={StyleSheet.absoluteFillObject}
-                facing="back"
-                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                onBarcodeScanned={onBarCode}
-              />
+              {
+                cameraEnabled && (
+                  <CameraView
+                      style={StyleSheet.absoluteFillObject}
+                      facing="back"
+                      barcodeScannerSettings={{
+                          barcodeTypes: ["qr"],
+                      }}
+                      onBarcodeScanned={onBarCode}
+                  />
+                )
+              }
               <View style={styles.overlay} pointerEvents="none">
                 <View style={styles.reticle} />
                 <Text style={styles.overlayText}>

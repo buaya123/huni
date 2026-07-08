@@ -22,6 +22,7 @@ const STATE_STYLES: Record<string, { bg: string; fg: string; label: string }> = 
 export default function PartnerHub() {
   const router = useRouter();
   const { user } = useAuth();
+  const [scannerPartners, setScannerPartners] = useState<any[]>([]);
   const [items, setItems] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -30,9 +31,18 @@ export default function PartnerHub() {
 
   const load = useCallback(async () => {
     try {
-      const rows = await api.get<Campaign[]>("/partner/campaigns");
-      setItems(rows);
-    } catch { setItems([]); } finally { setLoading(false); setRefreshing(false); }
+
+    const rows = await api.get<any[]>(
+        "/scanner/partners"
+    );
+
+    setScannerPartners(rows);
+
+} catch {
+
+    setScannerPartners([]);
+
+}
   }, []);
 
   useEffect(() => { if (isPartner) load(); else setLoading(false); }, [isPartner, load]);
@@ -44,6 +54,14 @@ export default function PartnerHub() {
         <View style={styles.topBar}>
           <Pressable onPress={() => router.back()} hitSlop={12}><Ionicons name="chevron-back" size={26} color={colors.onSurface} /></Pressable>
           <Text style={styles.title}>Partner Hub</Text>
+          {
+          scannerPartners.length > 0 && (
+            <Pressable onPress={()=>router.push("/partner/select")}>
+              <Text>
+                Scanner
+              </Text>
+            </Pressable>
+          )}
           <View style={{ width: 26 }} />
         </View>
         <View style={styles.center}>
@@ -80,15 +98,69 @@ export default function PartnerHub() {
         </View>
 
         <View style={styles.actions}>
-          <Pressable style={[styles.actionBtn, styles.primary]} onPress={() => router.push("/partner/scan")} testID="partner-scan-btn">
-            <Ionicons name="qr-code-outline" size={26} color="#FFFFFF" />
-            <Text style={styles.actionText}>Scan a user</Text>
-          </Pressable>
-          <Pressable style={[styles.actionBtn, styles.secondary]} onPress={() => router.push("/partner/campaigns/create")} testID="partner-new-campaign">
-            <Ionicons name="add-circle-outline" size={26} color={colors.brand} />
-            <Text style={[styles.actionText, { color: colors.brand }]}>New campaign</Text>
-          </Pressable>
-        </View>
+
+  <Pressable
+    style={[styles.actionBtn, styles.primary]}
+    onPress={() => router.push("/partner/scan")}
+    testID="partner-scan-btn"
+  >
+    <Ionicons
+      name="qr-code-outline"
+      size={26}
+      color="#FFFFFF"
+    />
+
+    <Text style={styles.actionText}>
+      Scan a user
+    </Text>
+
+  </Pressable>
+
+  <Pressable
+    style={[styles.actionBtn, styles.secondary]}
+    onPress={() => router.push("/partner/campaigns/create")}
+    testID="partner-new-campaign"
+  >
+    <Ionicons
+      name="add-circle-outline"
+      size={26}
+      color={colors.brand}
+    />
+
+    <Text
+      style={[
+        styles.actionText,
+        { color: colors.brand },
+      ]}
+    >
+      New campaign
+    </Text>
+
+  </Pressable>
+
+  <Pressable
+    style={[styles.actionBtn, styles.secondary]}
+    onPress={() => router.push("/partner/scanners")}
+    testID="partner-scanners"
+  >
+    <Ionicons
+      name="people-outline"
+      size={26}
+      color={colors.brand}
+    />
+
+    <Text
+      style={[
+        styles.actionText,
+        { color: colors.brand },
+      ]}
+    >
+      Scanners
+    </Text>
+
+  </Pressable>
+
+</View>
 
         <View style={styles.statsRow}>
           <View style={styles.stat}><Text style={styles.statValue}>{items.length}</Text><Text style={styles.statLabel}>Campaigns</Text></View>

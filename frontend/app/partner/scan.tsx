@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -37,6 +37,8 @@ type ScanResult = {
 
 export default function PartnerScan() {
   const router = useRouter();
+  const {mode,partner_id,}=useLocalSearchParams<{mode?:string;partner_id?:string;}>();
+  const scannerMode = mode === "scanner";
   const [permission, requestPermission] = useCameraPermissions();
   const scannedRef = useRef(false);
   const [manualCode, setManualCode] = useState("");
@@ -50,19 +52,61 @@ export default function PartnerScan() {
     if (permission.canAskAgain) requestPermission();
   }, [permission, requestPermission]);
 
-  const doScan = async (code: string) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const r = await api.post<ScanResult>("/partner/scan", { code });
-      setResult(r);
-    } catch (e) {
-      Alert.alert("Scan failed", e instanceof Error ? e.message : "Unknown error");
-      scannedRef.current = false; // allow retry
-    } finally {
-      setBusy(false);
+ const doScan = async (code: string) => {
+
+  if (busy) return;
+
+  setBusy(true);
+
+  try {
+
+    if (scannerMode) {
+
+      await api.post("/partner/scanners", {
+        user_id: code.replace("huni:user:", ""),
+      });
+
+      Alert.alert(
+        "Scanner Added",
+        "The user has been added as one of your scanners.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.back(),
+          },
+        ],
+      );
+
+      return;
     }
-  };
+
+    const r = await api.post<ScanResult>(
+      "/partner/scan",
+      {
+        code,partner_id,
+      },
+    );
+
+    setResult(r);
+
+  } catch (e) {
+
+    Alert.alert(
+      scannerMode ? "Unable to add scanner" : "Scan failed",
+      e instanceof Error
+        ? e.message
+        : "Unknown error",
+    );
+
+    scannedRef.current = false;
+
+  } finally {
+
+    setBusy(false);
+
+  }
+
+};
 
   const onBarCode = ({ data }: { data: string }) => {
     if (scannedRef.current || busy) return;
@@ -79,7 +123,7 @@ export default function PartnerScan() {
     if (!result || redeeming) return;
     setRedeeming(c.id);
     try {
-      await api.post("/partner/redeem", { campaign_id: c.id, user_id: result.user.id });
+      await api.post("/partner/redeem",{campaign_id:c.id,user_id:result.user.id,partner_id,},);
       Alert.alert(
         "Redeemed",
         `${c.title} applied to ${result.user.alias}.`,
@@ -103,7 +147,9 @@ export default function PartnerScan() {
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
         <Pressable onPress={() => router.back()} hitSlop={12}><Ionicons name="chevron-back" size={26} color={colors.onSurface} /></Pressable>
-        <Text style={styles.title}>Scan user QR</Text>
+        <Text style={styles.title}>
+    {scannerMode ? "Add Scanner" : "Scan user QR"}
+</Text>
         <Pressable onPress={() => setManualOpen(true)} hitSlop={12} testID="manual-entry">
           <Ionicons name="keypad-outline" size={22} color={colors.onSurface} />
         </Pressable>
@@ -136,7 +182,13 @@ export default function PartnerScan() {
               <View style={styles.overlay} pointerEvents="none">
                 <View style={styles.reticle} />
                 <Text style={styles.overlayText}>
-                  {busy ? "Reading…" : "Point at a Huni profile QR"}
+                  {
+  busy
+    ? "Reading..."
+    : scannerMode
+        ? "Scan the user's Huni QR"
+        : "Point at a Huni profile QR"
+}
                 </Text>
               </View>
               <Pressable style={styles.manualPill} onPress={() => setManualOpen(true)}>

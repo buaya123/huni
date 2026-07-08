@@ -300,14 +300,18 @@ class CampaignRejectIn(BaseModel):
     reason: str = Field(default="", max_length=300)
 
 
-class PartnerScanIn(BaseModel):
-    code: str = Field(min_length=1, max_length=500)  # QR payload — "huni:user:<id>" or just user id
+# class PartnerScanIn(BaseModel):
+#     code: str = Field(min_length=1, max_length=500)  # QR payload — "huni:user:<id>" or just user id
 
+class PartnerScanIn(BaseModel):
+    qr: str
+    partner_id: str | None = None
 
 class PartnerRedeemIn(BaseModel):
     campaign_id: str
     user_id: str
     note: Optional[str] = Field(default=None, max_length=200)
+    partner_id: str | None = None
 
 class ScannerAssignIn(BaseModel):
     user_id: str
@@ -528,9 +532,13 @@ def require_role(user: Dict[str, Any], *roles: str) -> None:
     if user.get("role", "user") not in roles:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-async def get_partner_for_user(user_id: str):
+async def get_partner_for_user(
+    user_id: str,
+    partner_id: str,
+):
     return await db.users.find_one(
         {
+            "id": partner_id,
             "role": "partner",
             "scanners.user_id": user_id,
         },
@@ -1457,7 +1465,7 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
     partner = user
 
     if user.get("role") == "user":
-        partner = await get_partner_for_user(user["id"])
+        partner = await get_partner_for_user(user["id"],inp.partner_id)
         if not partner:
             raise HTTPException(
                 status_code=403,
@@ -1504,7 +1512,7 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
     """Apply a campaign to a user (one-shot per user per campaign)."""
     partner = user
     if user.get("role") == "user":
-        partner = await get_partner_for_user(user["id"])
+        partner = await get_partner_for_user(user["id"], inp.partner_id)
         if not partner:
             raise HTTPException(
                 status_code=403,
@@ -1523,14 +1531,14 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
                 status_code=403,
                 detail="Not your campaign"
             )
-        elif visibility == "selected":
-            if partner["id"] not in c.get("allowed_partners", []):
-                raise HTTPException(
-                    status_code=403,
-                    detail="You are not allowed to redeem this campaign."
-                )
-        elif visibility == "all":
-            pass
+    elif visibility == "selected":
+        if partner["id"] not in c.get("allowed_partners", []):
+            raise HTTPException(
+                status_code=403,
+                detail="You are not allowed to redeem this campaign."
+            )
+    elif visibility == "all":
+        pass
     if c.get("status") != "approved" or not c.get("enabled", True):
         raise HTTPException(status_code=400, detail="Campaign is not live")
     today = now().date().isoformat()
@@ -1637,6 +1645,11 @@ async def partner_scanners(user: Dict[str, Any] = Depends(get_current_user)):
             "scanners": 1
         }
     )
+    if target["id"] == user["id"]:
+        raise HTTPException(
+            400,
+            "You cannot assign yourself."
+        )
 
     return partner.get("scanners", [])
 
@@ -1669,6 +1682,12 @@ async def partner_add_scanner(
     if target["role"] != "user":
         raise HTTPException(400, "Only users can become scanners")
 
+    if target.get("status") == "banned":
+        raise HTTPException(
+            400,
+            "User is banned."
+        )
+
     exists = await db.users.find_one(
         {
             "id": user["id"],
@@ -1700,11 +1719,27 @@ async def partner_add_scanner(
     return {"status": "ok"}
 
 
-@api.delete("/partner/scanners/{scanner_id}")
-async def partner_remove_scanner(
-    scanner_id: str,
+@api.get("/scanner/partners")
+async def scanner_partners(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+
+    rows = await db.users.find(
+        {
+            "role": "partner",
+            "scanners.user_id": user["id"],
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "business_name": 1,
+        },
+    ).to_list(50)
+
+    return rows
+
+@api.delete("/partner/scanners/{scanner_id}")
+async def partner_remove_scanner(scanner_id: str,user: Dict[str, Any] = Depends(get_current_user),):
 
     require_role(user, "partner", "admin")
 
@@ -1721,7 +1756,12 @@ async def partner_remove_scanner(
         }
     )
 
-    return {"status": "ok"}
+    return {
+        "success":True,
+        "message":"Scanner removed."
+    }
+
+
 
 
 # ---------- public campaigns (users browse deals) ----------

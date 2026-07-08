@@ -309,6 +309,9 @@ class PartnerRedeemIn(BaseModel):
     user_id: str
     note: Optional[str] = Field(default=None, max_length=200)
 
+class ScannerAssignIn(BaseModel):
+    user_id: str
+
 
 class StoreItemIn(BaseModel):
     category: str = Field(pattern="^(appearance|seasonal|events|collections)$")
@@ -374,6 +377,9 @@ class BlockIn(BaseModel):
 
 class BioUpdate(BaseModel):
     bio: str = Field(max_length=200)
+
+class ScannerAssignInput(BaseModel):
+    user_id: str
 
 
 # ---------- utility: sanitize user for public output ----------
@@ -521,6 +527,18 @@ async def maybe_promote_admin(user: Dict[str, Any]) -> Dict[str, Any]:
 def require_role(user: Dict[str, Any], *roles: str) -> None:
     if user.get("role", "user") not in roles:
         raise HTTPException(status_code=403, detail="Not allowed")
+
+async def get_partner_for_user(user_id: str):
+    return await db.users.find_one(
+        {
+            "role": "partner",
+            "scanners.user_id": user_id,
+        },
+        {
+            "_id": 0,
+        },
+    )
+
 
 
 # ---------- websocket manager ----------
@@ -1436,25 +1454,37 @@ def _parse_qr_code(code: str) -> str:
 @api.post("/partner/scan")
 async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Resolve a scanned QR to a user + list the partner's live campaigns and eligibility."""
-    require_role(user, "partner", "admin")
+    partner = user
+
+    if user.get("role") == "user":
+        partner = await get_partner_for_user(user["id"])
+        if not partner:
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed"
+            )
+    else:
+        require_role(user, "partner", "admin")
+        
     target_id = _parse_qr_code(inp.code)
     target = await db.users.find_one({"id": target_id}, {"_id": 0, "password": 0})
     if not target:
         raise HTTPException(status_code=404, detail="No user matches this code")
-    rows = await db.campaigns.find(({"status":"approved"}).to_list(200), {"_id": 0}).sort("created_at", -1).to_list(50)
+    rows = await db.campaigns.find(
+    {"status": "approved"},{"_id": 0}).sort("created_at", -1).to_list(50)
     today = now().date().isoformat()
     live: List[Dict[str, Any]] = []
     for c in rows:
         # Owner-only campaign
         if c.get("visible_to","owner") == "owner":
-            if c["partner_id"] != user["id"]:
+            if c["partner_id"] != partner["id"]:
                 continue
         # Global campaign
         elif c["visible_to"] == "all":
             pass
         # Selected partners
         elif c["visible_to"] == "selected":
-            if user["id"] not in c.get("allowed_partners",[]):
+            if partner["id"] not in c.get("allowed_partners", []):
                 continue
         if not c.get("enabled", True):
             continue
@@ -1472,19 +1502,29 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
 @api.post("/partner/redeem")
 async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Apply a campaign to a user (one-shot per user per campaign)."""
-    require_role(user, "partner", "admin")
+    partner = user
+    if user.get("role") == "user":
+        partner = await get_partner_for_user(user["id"])
+        if not partner:
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed"
+            )
+    else:
+        require_role(user, "partner", "admin")
+
     c = await db.campaigns.find_one({"id": inp.campaign_id})
     visibility = c.get("visible_to","owner")
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
     if visibility == "owner":
-        if c["partner_id"] != user["id"]:
+        if c["partner_id"] != partner["id"]:
             raise HTTPException(
                 status_code=403,
                 detail="Not your campaign"
             )
         elif visibility == "selected":
-            if user["id"] not in c.get("allowed_partners",[]):
+            if partner["id"] not in c.get("allowed_partners", []):
                 raise HTTPException(
                     status_code=403,
                     detail="You are not allowed to redeem this campaign."
@@ -1582,6 +1622,106 @@ async def partner_redemptions(user: Dict[str, Any] = Depends(get_current_user)) 
     require_role(user, "partner", "admin")
     rows = await db.redemptions.find({"partner_id": user["id"]}, {"_id": 0}).sort("redeemed_at", -1).limit(200).to_list(200)
     return rows
+
+@api.get("/partner/scanners")
+async def partner_scanners(user: Dict[str, Any] = Depends(get_current_user)):
+
+    require_role(user, "partner", "admin")
+
+    partner = await db.users.find_one(
+        {
+            "id": user["id"]
+        },
+        {
+            "_id": 0,
+            "scanners": 1
+        }
+    )
+
+    return partner.get("scanners", [])
+
+
+@api.post("/partner/scanners")
+async def partner_add_scanner(
+    inp: ScannerAssignIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+
+    require_role(user, "partner", "admin")
+
+    target = await db.users.find_one(
+        {
+            "id": inp.user_id
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "username": 1,
+            "display_name": 1,
+            "avatar": 1,
+            "role": 1,
+        }
+    )
+
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    if target["role"] != "user":
+        raise HTTPException(400, "Only users can become scanners")
+
+    exists = await db.users.find_one(
+        {
+            "id": user["id"],
+            "scanners.user_id": target["id"]
+        }
+    )
+
+    if exists:
+        raise HTTPException(409, "Already assigned")
+
+    await db.users.update_one(
+        {
+            "id": user["id"]
+        },
+        {
+            "$push": {
+                "scanners": {
+                    "user_id": target["id"],
+                    "username": target.get("username"),
+                    "display_name": target.get("display_name"),
+                    "avatar": target.get("avatar"),
+                    "assigned_at": now().isoformat(),
+                    "active": True
+                }
+            }
+        }
+    )
+
+    return {"status": "ok"}
+
+
+@api.delete("/partner/scanners/{scanner_id}")
+async def partner_remove_scanner(
+    scanner_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+
+    require_role(user, "partner", "admin")
+
+    await db.users.update_one(
+        {
+            "id": user["id"]
+        },
+        {
+            "$pull": {
+                "scanners": {
+                    "user_id": scanner_id
+                }
+            }
+        }
+    )
+
+    return {"status": "ok"}
 
 
 # ---------- public campaigns (users browse deals) ----------

@@ -17,59 +17,66 @@ export default function PartnerSelect(){
 
 const [items,setItems]=useState<any[]>([]);
 
-useEffect(()=>{
+useEffect(() => {
 
-api.get("/scanner/partners")
+    api.get<any[]>("/scanner/partners").then((rows) => {
 
-.then(setItems);
+        setItems(rows);
 
-},[]);
+        if (rows.length === 1) {
 
-return(
+            router.replace({
 
-<SafeAreaView style={{flex:1}}>
+                pathname: "/partner/scan",
 
-{
+                params: {
 
-items.map((p)=>(
+                    partner_id: rows[0].id,
 
-<Pressable
+                },
 
-key={p.id}
+            });
 
-onPress={()=>{
+        }
 
-router.push({
+    });
 
-pathname:"/partner/scan",
+}, []);
 
-params:{
-
-partner_id:p.id,
-
-},
-
-});
-
-}}
-
-style={styles.row}
-
->
-
-<Text>
-
-{p.business_name}
-
-</Text>
-
-</Pressable>
-
-))
-
+if (items.length === 1) {
+    return null;
 }
 
-</SafeAreaView>
+return (
+
+    <SafeAreaView style={{ flex: 1 }}>
+
+        {items.map((p) => (
+
+            <Pressable
+                key={p.id}
+                onPress={() => {
+
+                    router.push({
+                        pathname: "/partner/scan",
+                        params: {
+                            partner_id: p.id,
+                        },
+                    });
+
+                }}
+                style={styles.row}
+            >
+
+                <Text>
+                    {p.business_name}
+                </Text>
+
+            </Pressable>
+
+        ))}
+
+    </SafeAreaView>
 
 );
 

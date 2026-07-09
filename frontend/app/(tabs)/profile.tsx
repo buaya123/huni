@@ -126,19 +126,30 @@ export default function Profile() {
             {
             scannerPartners.length > 0 && (
 
-            <Pressable
-                style={styles.perksPill}
-                onPress={() => router.push("/partner/select")}
-            >
-                <Ionicons
-                    name="qr-code-outline"
-                    size={14}
-                    color={colors.brand}
-                />
-                <Text style={styles.perksText}>
-                    Scanner
-                </Text>
-            </Pressable>
+           <Pressable
+              style={styles.perksPill}
+              onPress={() => {
+                  if (scannerPartners.length === 1) {
+                      router.push({
+                          pathname: "/partner/scan",
+                          params: {
+                              partner_id: scannerPartners[0].id,
+                          },
+                      });
+                  } else {
+                      router.push("/partner/select");
+                  }
+              }}
+          >
+              <Ionicons
+                  name="qr-code-outline"
+                  size={14}
+                  color={colors.brand}
+              />
+              <Text style={styles.perksText}>
+                  Scanner
+              </Text>
+          </Pressable>
             )
             }
           </View>

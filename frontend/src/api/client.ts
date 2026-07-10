@@ -1,6 +1,8 @@
 import { storage } from "@/src/utils/storage";
 
-const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? "";
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? ""
+console.log("BASE_URL =", BASE_URL);
+console.log("API_BASE =", `${BASE_URL}/api`);;
 export const API_BASE = `${BASE_URL}/api`;
 
 const TOKEN_KEY = "sibug_token";

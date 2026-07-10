@@ -34,7 +34,16 @@ export default function Home() {
 
   const load = useCallback(async () => {
     try {
-      const rows = await api.get<FeedItem[]>(`/posts?tab=${tab}`);
+      const rows = await api.get<any>(`/posts?tab=${tab}`);
+
+console.log("ROWS TYPE:", typeof rows);
+
+if (typeof rows === "string") {
+    console.log(rows.substring(0, 300));
+}
+      
+      console.log("POSTS RESPONSE TYPE:", typeof rows);
+console.log("POSTS RESPONSE:", rows);
       setPosts(rows);
     } catch {
       setPosts([]);
@@ -104,16 +113,42 @@ export default function Home() {
               subtitle="Be the first to share something in this tab."
             />
           }
-          renderItem={({ item }) =>
-            item.type === "ad" ? (
-              <AdCard ad={item} />
-            ) : (
-              <PostCard
-                post={item}
-                onChange={(updated) => setPosts((prev) => prev.map((p) => (p.id === updated.id && p.type !== "ad" ? updated : p)))}
-              />
-            )
-          }
+          renderItem={({ item }) => {
+
+    console.log("HOME ITEM", item);
+
+    if ((item as any).type === "ad") {
+
+        return <AdCard ad={item as Ad} />;
+
+    }
+
+    if (!(item as any).id) {
+
+        console.log("INVALID ITEM", item);
+
+        return null;
+
+    }
+
+    return (
+
+        <PostCard
+            post={item as Post}
+            onChange={(updated) =>
+                setPosts((prev) =>
+                    prev.map((p) =>
+                        p.id === updated.id && p.type !== "ad"
+                            ? updated
+                            : p
+                    )
+                )
+            }
+        />
+
+    );
+
+}}
         />
       )}
     </SafeAreaView>

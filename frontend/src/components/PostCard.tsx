@@ -55,6 +55,14 @@ const PREVIEW_LEN = 120;
 
 export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
   const router = useRouter();
+  console.log("POST DEBUG", {
+    id: post.id,
+    title: post.title,
+    content: post.content,
+    author: post.author,
+    images: post.images,
+    reactions: post.reactions,
+});
 
   const react = async (kind: string) => {
     try {
@@ -82,8 +90,16 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
   };
 
   const openProfile = () => {
-    if (post.author?.id) router.push(`/user/${post.author.id}`);
-  };
+
+    if (!post.author)
+        return;
+
+    if (!post.author.id)
+        return;
+
+    router.push(`/user/${post.author.id}`);
+
+};
 
   const openPost = () => {
     if (onPress) onPress();
@@ -91,10 +107,12 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
   };
 
   const isFeed = mode === "feed";
-  const displayContent =
-    isFeed && post.content.length > PREVIEW_LEN
-      ? `${post.content.slice(0, PREVIEW_LEN).trimEnd()}....`
-      : post.content;
+const content = typeof post.content === "string" ? post.content : "";
+
+const displayContent =
+    isFeed && content.length > PREVIEW_LEN
+        ? `${content.slice(0, PREVIEW_LEN).trimEnd()}....`
+        : content;
 
   // top 3 reactions
   const rEntries = Object.entries(post.reactions || {}).filter(([, v]) => v > 0);
@@ -106,9 +124,17 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
     <Pressable onPress={openPost} style={styles.card} testID={`post-card-${post.id}`}>
       <View style={styles.header}>
         <Pressable onPress={openProfile} style={styles.authorRow} hitSlop={8}>
-          <Avatar alias={post.author.alias} size={36} />
+          <Avatar
+    alias={post.author?.alias ?? "Anonymous"}
+    size={36}
+/>
           <View style={{ marginLeft: spacing.md, flex: 1 }}>
-            <Text style={styles.alias} numberOfLines={1}>{post.author.alias}</Text>
+            <Text
+    style={styles.alias}
+    numberOfLines={1}
+>
+    {post.author?.alias ?? "Anonymous"}
+</Text>
             <Text style={styles.timestamp}>{timeAgo(post.created_at)} · {post.audience}</Text>
           </View>
         </Pressable>
@@ -120,7 +146,12 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
           {post.title}
         </Text>
       )}
-      <Text style={styles.content} numberOfLines={isFeed ? 3 : undefined}>{displayContent}</Text>
+      <Text
+    style={styles.content}
+    numberOfLines={isFeed ? 3 : undefined}
+>
+    {displayContent || ""}
+</Text>
 
       {!!post.images?.length && <PostImages images={post.images} height={isFeed ? 220 : 300} />}
 

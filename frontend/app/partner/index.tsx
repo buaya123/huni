@@ -159,6 +159,28 @@ export default function PartnerHub() {
     </Text>
 
   </Pressable>
+<Pressable
+  style={[styles.actionBtn, styles.secondary]}
+  onPress={() => router.push("/partner/audit")}
+>
+
+  <Ionicons
+    name="document-text-outline"
+    size={26}
+    color={colors.brand}
+  />
+
+  <Text
+    style={[
+      styles.actionText,
+      { color: colors.brand },
+    ]}
+  >
+    Audit Trail
+  </Text>
+
+</Pressable>
+  
 
 </View>
 

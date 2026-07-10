@@ -1583,8 +1583,8 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
         "id": new_id(),
         "campaign_id": c["id"],
         "campaign_title": c["title"],
-        "partner_id": user["id"],
-        "partner_business_name": user.get("business_name") or user.get("alias", ""),
+        "partner_id": partner["id"],
+        "partner_business_name": partner.get("business_name") or partner.get("alias", ""),
         "user_id": inp.user_id,
         "user_alias": target.get("alias", ""),
         "exp_awarded": exp_award,
@@ -1596,6 +1596,34 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
         "redeemed_at": now().isoformat(),
     }
     await db.redemptions.insert_one(r_doc)
+    await db.audit_logs.insert_one({
+
+    "id": new_id(),
+
+    "type": "campaign_redemption",
+
+    "created_at": now().isoformat(),
+
+    "campaign_id": c["id"],
+    "campaign_title": c["title"],
+
+    "partner_id": partner["id"],
+    "partner_alias": partner.get("alias"),
+    "partner_business_name": partner.get("business_name", ""),
+
+    "scanner_id": user["id"],
+    "scanner_alias": user.get("alias"),
+
+    "customer_id": target["id"],
+    "customer_alias": target.get("alias"),
+
+    "exp_awarded": exp_award,
+    "tokens_awarded": token_award,
+    "discount_applied": discount_label,
+
+    "status": "success",
+
+})
     r_doc.pop("_id", None)
     inc_updates: Dict[str, int] = {}
     if exp_award > 0:
@@ -1646,6 +1674,37 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
 async def partner_redemptions(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
     require_role(user, "partner", "admin")
     rows = await db.redemptions.find({"partner_id": user["id"]}, {"_id": 0}).sort("redeemed_at", -1).limit(200).to_list(200)
+    return rows
+
+@api.get("/partner/audit")
+async def partner_audit(
+    user: Dict[str, Any] = Depends(get_current_user)
+) -> List[Dict[str, Any]]:
+
+    require_role(user, "partner", "admin")
+
+    rows = await db.audit_logs.find(
+        {
+            "partner_id": user["id"],
+            "type": "campaign_redemption",
+        },
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+
+    return rows
+
+@api.get("/admin/audit")
+async def admin_audit(
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+
+    require_role(user, "admin")
+
+    rows = await db.audit_logs.find(
+        {},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(1000)
+
     return rows
 
 @api.get("/partner/scanners")

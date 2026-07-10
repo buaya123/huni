@@ -14,6 +14,15 @@ export default function CreateCampaign() {
   const [terms, setTerms] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [redemptionPolicy, setRedemptionPolicy] = useState<
+      "once" | "cooldown" | "unlimited"
+  >("once");
+
+  const [cooldownValue, setCooldownValue] = useState("1");
+
+  const [cooldownUnit, setCooldownUnit] = useState<
+      "minutes" | "hours" | "days" | "weeks" | "months"
+  >("days");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -30,6 +39,9 @@ export default function CreateCampaign() {
         terms: terms.trim(),
         start_date: startDate.trim() || null,
         end_date: endDate.trim() || null,
+        redemption_policy: redemptionPolicy,
+        cooldown_value: parseInt(cooldownValue) || 1,
+        cooldown_unit: cooldownUnit,
         visible_to: "owner",
         allowed_partners: [],
       });
@@ -89,6 +101,140 @@ export default function CreateCampaign() {
               <TextInput style={styles.input} value={endDate} onChangeText={setEndDate} placeholder="optional" placeholderTextColor={colors.muted} autoCapitalize="none" />
             </View>
           </View>
+          <View style={styles.section}>
+
+    <Text style={styles.label}>
+        Redemption Policy
+    </Text>
+
+    <View style={styles.policyRow}>
+
+        <Pressable
+            style={[
+                styles.policyBtn,
+                redemptionPolicy === "once" && styles.policyBtnActive,
+            ]}
+            onPress={() => setRedemptionPolicy("once")}
+        >
+            <Text
+                style={[
+                    styles.policyText,
+                    redemptionPolicy === "once" && styles.policyTextActive,
+                ]}
+            >
+                Once
+            </Text>
+        </Pressable>
+
+        <Pressable
+            style={[
+                styles.policyBtn,
+                redemptionPolicy === "cooldown" && styles.policyBtnActive,
+            ]}
+            onPress={() => setRedemptionPolicy("cooldown")}
+        >
+            <Text
+                style={[
+                    styles.policyText,
+                    redemptionPolicy === "cooldown" && styles.policyTextActive,
+                ]}
+            >
+                Cooldown
+            </Text>
+        </Pressable>
+
+        <Pressable
+            style={[
+                styles.policyBtn,
+                redemptionPolicy === "unlimited" && styles.policyBtnActive,
+            ]}
+            onPress={() => setRedemptionPolicy("unlimited")}
+        >
+            <Text
+                style={[
+                    styles.policyText,
+                    redemptionPolicy === "unlimited" && styles.policyTextActive,
+                ]}
+            >
+                Unlimited
+            </Text>
+        </Pressable>
+
+    </View>
+
+</View>
+{
+    redemptionPolicy === "cooldown" && (
+
+        <View style={styles.rowGap}>
+
+            <View
+                style={[
+                    styles.section,
+                    { flex: 1 },
+                ]}
+            >
+
+                <Text style={styles.label}>
+                    Every
+                </Text>
+
+                <TextInput
+                    style={styles.input}
+                    keyboardType="number-pad"
+                    value={cooldownValue}
+                    onChangeText={setCooldownValue}
+                />
+
+            </View>
+
+            <View
+                style={[
+                    styles.section,
+                    { flex: 1 },
+                ]}
+            >
+
+                <Text style={styles.label}>
+                    Unit
+                </Text>
+
+                <View style={styles.policyRow}>
+
+                    {["minutes","hours","days","weeks","months"].map((u) => (
+
+                        <Pressable
+                            key={u}
+                            style={[
+                                styles.policyBtn,
+                                cooldownUnit === u && styles.policyBtnActive,
+                            ]}
+                            onPress={() => setCooldownUnit(u as any)}
+                        >
+
+                            <Text
+                                style={[
+                                    styles.policyText,
+                                    cooldownUnit === u && styles.policyTextActive,
+                                ]}
+                            >
+
+                                {u}
+
+                            </Text>
+
+                        </Pressable>
+
+                    ))}
+
+                </View>
+
+            </View>
+
+        </View>
+
+    )
+}
 
           <Pressable style={styles.submit} onPress={submit} disabled={saving} testID="submit-campaign">
             {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>Submit for approval</Text>}
@@ -117,5 +263,52 @@ const styles = StyleSheet.create({
   infoText: { flex: 1, color: colors.onBrandTertiary, fontSize: font.sm, lineHeight: 18 },
   submit: { backgroundColor: colors.brand, borderRadius: radius.pill, paddingVertical: 14, alignItems: "center", marginTop: spacing.md },
   submitText: { color: "#FFFFFF", fontWeight: "800", fontSize: font.base },
+  policyRow: {
+
+    flexDirection: "row",
+
+    flexWrap: "wrap",
+
+    gap: spacing.sm,
+
+},
+
+policyBtn: {
+
+    paddingHorizontal: spacing.md,
+
+    paddingVertical: spacing.sm,
+
+    borderRadius: radius.pill,
+
+    borderWidth: 1,
+
+    borderColor: colors.border,
+
+    backgroundColor: colors.surfaceSecondary,
+
+},
+
+policyBtnActive: {
+
+    backgroundColor: colors.brand,
+
+    borderColor: colors.brand,
+
+},
+
+policyText: {
+
+    color: colors.onSurface,
+
+    fontWeight: "700",
+
+},
+
+policyTextActive: {
+
+    color: "#FFFFFF",
+
+},
   footnote: { color: colors.muted, fontSize: font.sm, textAlign: "center" },
 });

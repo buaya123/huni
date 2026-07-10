@@ -276,6 +276,21 @@ class CampaignCreate(BaseModel):
     image_ids: Optional[List[str]] = None
     start_date: Optional[str] = Field(default=None, max_length=10)  # YYYY-MM-DD
     end_date: Optional[str] = Field(default=None, max_length=10)
+    redemption_policy: str = Field(
+        default="once",
+        pattern="^(once|cooldown|unlimited)$",
+    )
+
+    cooldown_value: int = Field(
+        default=1,
+        ge=1,
+        le=365,
+    )
+
+    cooldown_unit: str = Field(
+        default="days",
+        pattern="^(minutes|hours|days|weeks|months)$",
+    )
 
 
 class CampaignUpdate(BaseModel):
@@ -287,6 +302,21 @@ class CampaignUpdate(BaseModel):
     start_date: Optional[str] = Field(default=None, max_length=10)
     end_date: Optional[str] = Field(default=None, max_length=10)
     enabled: Optional[bool] = None
+    redemption_policy: Optional[str] = Field(
+        default=None,
+        pattern="^(once|cooldown|unlimited)$",
+    )
+
+    cooldown_value: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=365,
+    )
+
+    cooldown_unit: Optional[str] = Field(
+        default=None,
+        pattern="^(minutes|hours|days|weeks|months)$",
+    )
 
 
 class CampaignApproveIn(BaseModel):
@@ -1377,6 +1407,9 @@ async def partner_create_campaign(inp: CampaignCreate, user: Dict[str, Any] = De
         "budget_tokens": 0,
         "remaining_exp": 0,
         "remaining_tokens": 0,
+        "redemption_policy": inp.redemption_policy,
+        "cooldown_value": inp.cooldown_value,
+        "cooldown_unit": inp.cooldown_unit,
         "created_at": now().isoformat(),
     }
     await db.campaigns.insert_one(doc)
@@ -1426,6 +1459,14 @@ async def partner_update_campaign(campaign_id: str, inp: CampaignUpdate, user: D
     if updates:
         await db.campaigns.update_one({"id": campaign_id}, {"$set": updates})
         c.update(updates)
+    if inp.redemption_policy is not None:
+        update["redemption_policy"] = inp.redemption_policy
+
+    if inp.cooldown_value is not None:
+        update["cooldown_value"] = inp.cooldown_value
+
+    if inp.cooldown_unit is not None:
+        update["cooldown_unit"] = inp.cooldown_unit
     return await _load_campaign_with_partner(c)
 
 
@@ -1508,9 +1549,39 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
             continue
         if c.get("end_date") and today > c["end_date"]:
             continue
-        already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": target_id})
+        policy = c.get("redemption_policy", "once")
+        last = await db.redemptions.find_one(
+            {
+                "campaign_id": c["id"],
+                "user_id": target_id,
+            },
+            sort=[("redeemed_at", -1)],
+        )
+        redeemable = True
+        if policy == "once":
+            redeemable = last is None
+        elif policy == "cooldown":
+            if last:
+                redeemed = datetime.fromisoformat(last["redeemed_at"])
+                value = int(c.get("cooldown_value", 1))
+                unit = c.get("cooldown_unit", "days")
+                if unit == "minutes":
+                    next_time = redeemed + timedelta(minutes=value)
+
+                elif unit == "hours":
+                    next_time = redeemed + timedelta(hours=value)
+
+                elif unit == "days":
+                    next_time = redeemed + timedelta(days=value)
+
+                elif unit == "weeks":
+                    next_time = redeemed + timedelta(weeks=value)
+
+                else:
+                    next_time = redeemed + timedelta(days=value * 30)
+                redeemable = now() >= next_time
         item = _hydrate_campaign(c, user)
-        item["already_redeemed"] = bool(already)
+        item["already_redeemed"] = not redeemable
         live.append(item)
     return {"user": public_user(target), "campaigns": live}
 
@@ -1566,9 +1637,45 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
     target = await db.users.find_one({"id": inp.user_id}, {"_id": 0, "password": 0})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    existing = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": inp.user_id})
-    if existing:
-        raise HTTPException(status_code=409, detail="This user has already redeemed this campaign")
+    policy = c.get("redemption_policy", "once")
+
+    last = await db.redemptions.find_one(
+        {
+            "campaign_id": c["id"],
+            "user_id": inp.user_id,
+        },
+        sort=[("redeemed_at", -1)],
+    )
+    if policy == "once":
+        if last:
+            raise HTTPException(
+                status_code=409,
+                detail="This user has already redeemed this campaign",
+            )
+    elif policy == "cooldown":
+        if last:
+            redeemed = datetime.fromisoformat(last["redeemed_at"])
+            value = int(c.get("cooldown_value", 1))
+            unit = c.get("cooldown_unit", "days")
+            if unit == "minutes":
+                next_time = redeemed + timedelta(minutes=value)
+            elif unit == "hours":
+                next_time = redeemed + timedelta(hours=value)
+            elif unit == "days":
+                next_time = redeemed + timedelta(days=value)
+            elif unit == "weeks":
+                next_time = redeemed + timedelta(weeks=value)
+            elif unit == "months":
+                next_time = redeemed + timedelta(days=value * 30)
+            else:
+                next_time = redeemed
+            if now() < next_time:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Next redemption available at {next_time.isoformat()}",
+                )
+    elif policy == "unlimited":
+        pass
     exp_award = int(c.get("exp_per_redemption", 0) or 0)
     token_award = int(c.get("tokens_per_redemption", 0) or 0)
     discount_label = c.get("discount_label", "") or ""
@@ -2811,7 +2918,7 @@ async def on_startup() -> None:
     await db.campaigns.create_index([("partner_id", 1), ("created_at", -1)])
     await db.campaigns.create_index("status")
     await db.redemptions.create_index("id", unique=True)
-    await db.redemptions.create_index([("campaign_id", 1), ("user_id", 1)], unique=True)
+    await db.redemptions.create_index([("campaign_id", 1), ("user_id", 1),("redeemed_at", -1)])
     await db.redemptions.create_index([("user_id", 1), ("redeemed_at", -1)])
     await db.redemptions.create_index([("partner_id", 1), ("redeemed_at", -1)])
     await db.store_items.create_index("id", unique=True)

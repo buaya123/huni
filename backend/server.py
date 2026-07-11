@@ -11,7 +11,7 @@ import logging
 import os
 import random
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1376,6 +1376,128 @@ def _hydrate_campaign(c: Dict[str, Any], partner: Optional[Dict[str, Any]] = Non
         "created_at": c["created_at"],
     }
 
+async def _campaign_redemption_state(
+    campaign: Dict[str, Any],
+    user_id: str,
+) -> Dict[str, Any]:
+
+    policy = campaign.get("redemption_policy", "once")
+
+    if policy == "once":
+
+        redemption_label = "One Time"
+
+    elif policy == "unlimited":
+
+        redemption_label = "Unlimited"
+
+    else:
+
+        value = int(campaign.get("cooldown_value", 1))
+        unit = campaign.get("cooldown_unit", "days")
+
+        if unit == "days" and value == 1:
+            redemption_label = "Daily"
+
+        elif unit == "weeks" and value == 1:
+            redemption_label = "Weekly"
+
+        elif unit == "months" and value == 1:
+            redemption_label = "Monthly"
+
+        else:
+
+            names = {
+                "minutes": "Minute",
+                "hours": "Hour",
+                "days": "Day",
+                "weeks": "Week",
+                "months": "Month",
+            }
+
+            label = names[unit]
+
+            if value > 1:
+                label += "s"
+
+            redemption_label = f"Every {value} {label}"
+
+    last = await db.redemptions.find_one(
+        {
+            "campaign_id": campaign["id"],
+            "user_id": user_id,
+        },
+        sort=[("redeemed_at", -1)],
+    )
+
+    can_redeem = True
+    next_redeem_at = None
+    status_text = "Ready to Redeem"
+    status_color = "green"
+
+    if policy == "once":
+
+        if last:
+
+            can_redeem = False
+            status_text = "Already Claimed"
+            status_color = "red"
+
+    elif policy == "cooldown":
+
+        if last:
+
+            redeemed = datetime.fromisoformat(last["redeemed_at"])
+
+            value = int(campaign.get("cooldown_value", 1))
+            unit = campaign.get("cooldown_unit", "days")
+
+            if unit == "minutes":
+                next_time = redeemed + timedelta(minutes=value)
+
+            elif unit == "hours":
+                next_time = redeemed + timedelta(hours=value)
+
+            elif unit == "days":
+
+                current_date = now().date()
+
+                next_time = datetime.combine(
+                    current_date + timedelta(days=value),
+                    time.min,
+                    tzinfo=now().tzinfo,
+                )
+
+            elif unit == "weeks":
+
+                next_time = redeemed + timedelta(weeks=value)
+
+            else:
+
+                next_time = redeemed + timedelta(days=value * 30)
+
+            can_redeem = now() >= next_time
+
+            if not can_redeem:
+
+                next_redeem_at = next_time.isoformat()
+                status_color = "yellow"
+
+                if unit == "days":
+                    status_text = f"Available at {next_time.strftime('%I:%M %p').lstrip('0')}"
+
+                else:
+                    status_text = "Cooling Down"
+
+    return {
+        "already_redeemed": not can_redeem,
+        "can_redeem": can_redeem,
+        "next_redeem_at": next_redeem_at,
+        "status_text": status_text,
+        "status_color": status_color,
+        "redemption_label": redemption_label,
+        "redemption_policy": policy,
+    }
 
 async def _load_campaign_with_partner(c: Dict[str, Any]) -> Dict[str, Any]:
     partner = await db.users.find_one({"id": c["partner_id"]}, {"_id": 0, "password": 0})
@@ -1501,8 +1623,12 @@ def _parse_qr_code(code: str) -> str:
 
 
 @api.post("/partner/scan")
-async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Resolve a scanned QR to a user + list the partner's live campaigns and eligibility."""
+async def partner_scan(
+    inp: PartnerScanIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Resolve a scanned QR to a user + list the partner's live campaigns."""
+
     partner = user
 
     if inp.partner_id:
@@ -1515,76 +1641,87 @@ async def partner_scan(inp: PartnerScanIn, user: Dict[str, Any] = Depends(get_cu
                 "_id": 0,
             },
         )
+
         if not partner:
             raise HTTPException(
                 status_code=403,
                 detail="Not allowed",
             )
+
     else:
+
         require_role(user, "partner", "admin")
-        
+
     target_id = _parse_qr_code(inp.code)
-    target = await db.users.find_one({"id": target_id}, {"_id": 0, "password": 0})
+
+    target = await db.users.find_one(
+        {
+            "id": target_id,
+        },
+        {
+            "_id": 0,
+            "password": 0,
+        },
+    )
+
     if not target:
-        raise HTTPException(status_code=404, detail="No user matches this code")
+        raise HTTPException(
+            status_code=404,
+            detail="No user matches this code",
+        )
+
     rows = await db.campaigns.find(
-    {"status": "approved"},{"_id": 0}).sort("created_at", -1).to_list(50)
+        {
+            "status": "approved",
+        },
+        {
+            "_id": 0,
+        },
+    ).sort(
+        "created_at",
+        -1,
+    ).to_list(50)
+
     today = now().date().isoformat()
+
     live: List[Dict[str, Any]] = []
+
     for c in rows:
-        # Owner-only campaign
-        if c.get("visible_to","owner") == "owner":
+
+        if c.get("visible_to", "owner") == "owner":
+
             if c["partner_id"] != partner["id"]:
                 continue
-        # Global campaign
-        elif c["visible_to"] == "all":
-            pass
-        # Selected partners
+
         elif c["visible_to"] == "selected":
+
             if partner["id"] not in c.get("allowed_partners", []):
                 continue
+
         if not c.get("enabled", True):
             continue
+
         if c.get("start_date") and today < c["start_date"]:
             continue
+
         if c.get("end_date") and today > c["end_date"]:
             continue
-        policy = c.get("redemption_policy", "once")
-        last = await db.redemptions.find_one(
-            {
-                "campaign_id": c["id"],
-                "user_id": target_id,
-            },
-            sort=[("redeemed_at", -1)],
+
+        item = _hydrate_campaign(c, partner)
+
+        item.update(
+            await _campaign_redemption_state(
+                c,
+                target_id,
+            )
         )
-        redeemable = True
-        if policy == "once":
-            redeemable = last is None
-        elif policy == "cooldown":
-            if last:
-                redeemed = datetime.fromisoformat(last["redeemed_at"])
-                value = int(c.get("cooldown_value", 1))
-                unit = c.get("cooldown_unit", "days")
-                if unit == "minutes":
-                    next_time = redeemed + timedelta(minutes=value)
 
-                elif unit == "hours":
-                    next_time = redeemed + timedelta(hours=value)
-
-                elif unit == "days":
-                    next_time = redeemed + timedelta(days=value)
-
-                elif unit == "weeks":
-                    next_time = redeemed + timedelta(weeks=value)
-
-                else:
-                    next_time = redeemed + timedelta(days=value * 30)
-                redeemable = now() >= next_time
-        item = _hydrate_campaign(c, user)
-        item["already_redeemed"] = not redeemable
         live.append(item)
-    return {"user": public_user(target), "campaigns": live}
 
+    return {
+        "user": public_user(target),
+        "campaigns": live,
+    }
 
 @api.post("/partner/redeem")
 async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
@@ -1662,7 +1799,12 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
             elif unit == "hours":
                 next_time = redeemed + timedelta(hours=value)
             elif unit == "days":
-                next_time = redeemed + timedelta(days=value)
+                today = now().date()
+                next_time = datetime.combine(
+                    today + timedelta(days=value),
+                    time.min,
+                    tzinfo=now().tzinfo,
+                )
             elif unit == "weeks":
                 next_time = redeemed + timedelta(weeks=value)
             elif unit == "months":
@@ -1999,8 +2141,12 @@ async def list_active_campaigns(user: Dict[str, Any] = Depends(get_current_user)
         # Hide depleted (budget-out) campaigns from the public feed
         if item["state"] == "depleted":
             continue
-        already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": user["id"]})
-        item["already_redeemed"] = bool(already)
+        item.update(
+            await _campaign_redemption_state(
+                c,
+                user["id"],
+            )
+        )
         out.append(item)
     return out
 
@@ -2012,8 +2158,12 @@ async def get_campaign_public(campaign_id: str, user: Dict[str, Any] = Depends(g
         raise HTTPException(status_code=404, detail="Campaign not found")
     p = await db.users.find_one({"id": c["partner_id"]}, {"_id": 0, "password": 0})
     item = _hydrate_campaign(c, p)
-    already = await db.redemptions.find_one({"campaign_id": c["id"], "user_id": user["id"]})
-    item["already_redeemed"] = bool(already)
+    item.update(
+        await _campaign_redemption_state(
+            c,
+            user["id"],
+        )
+    )
     return item
 
 

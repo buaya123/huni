@@ -24,10 +24,22 @@ type Campaign = {
   id: string;
   title: string;
   description: string;
+
   exp_per_redemption: number;
   tokens_per_redemption: number;
   discount_label: string;
+
   already_redeemed: boolean;
+
+  can_redeem: boolean;
+
+  redemption_label: string;
+
+  status_text: string;
+
+  status_color: "green" | "yellow" | "red";
+
+  next_redeem_at?: string;
 };
 
 type ScanResult = {
@@ -251,27 +263,57 @@ const rescan = () => {
                   {c.tokens_per_redemption > 0 && !!c.discount_label && "  •  "}
                   {c.discount_label}
                 </Text>
-              </View>
-              {c.already_redeemed ? (
-                <View style={[styles.claimBtn, styles.claimedBtn]}>
-                  <Ionicons name="checkmark" size={16} color={colors.muted} />
-                  <Text style={styles.claimedText}>Claimed</Text>
-                </View>
-              ) : (
-                <Pressable
-                  style={styles.claimBtn}
-                  onPress={() => doRedeem(c)}
-                  disabled={redeeming === c.id}
-                  testID={`redeem-${c.id}`}
+                <Text style={styles.policyText}>
+                    {c.redemption_label}
+                </Text>
+
+                <Text
+                    style={[
+                        styles.statusText,
+                        c.status_color === "green"
+                            ? styles.statusGreen
+                            : c.status_color === "yellow"
+                            ? styles.statusYellow
+                            : styles.statusRed,
+                    ]}
                 >
-                  {redeeming === c.id ? <ActivityIndicator color="#FFFFFF" /> : (
-                    <>
-                      <Ionicons name="gift" size={16} color="#FFFFFF" />
-                      <Text style={styles.claimText}>Apply</Text>
-                    </>
-                  )}
-                </Pressable>
-              )}
+                    {c.status_text}
+                </Text>
+              </View>
+              <Pressable
+    style={[
+        styles.claimBtn,
+        !c.can_redeem && styles.claimedBtn,
+    ]}
+    onPress={() => doRedeem(c)}
+    disabled={!c.can_redeem || redeeming === c.id}
+    testID={`redeem-${c.id}`}
+>
+
+    {redeeming === c.id ? (
+
+        <ActivityIndicator color="#FFFFFF" />
+
+    ) : (
+
+        <>
+            <Ionicons
+                name={c.can_redeem ? "gift" : "time-outline"}
+                size={16}
+                color="#FFFFFF"
+            />
+
+            <Text style={styles.claimText}>
+
+                {c.can_redeem ? "Apply" : "Unavailable"}
+
+            </Text>
+
+        </>
+
+    )}
+
+</Pressable>
             </View>
           ))}
         </ScrollView>
@@ -350,4 +392,39 @@ const styles = StyleSheet.create({
   mText: { color: "#FFFFFF", fontWeight: "800" },
   ghostBtn: { backgroundColor: colors.surfaceTertiary },
   ghostText: { color: colors.onSurface, fontWeight: "800" },
+  policyText: {
+
+    marginTop: 8,
+
+    fontWeight: "700",
+
+    color: colors.brand,
+
+},
+
+statusText: {
+
+    marginTop: 4,
+
+    fontWeight: "600",
+
+},
+
+statusGreen: {
+
+    color: "#22C55E",
+
+},
+
+statusYellow: {
+
+    color: "#EAB308",
+
+},
+
+statusRed: {
+
+    color: "#EF4444",
+
+},
 });

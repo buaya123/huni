@@ -33,6 +33,16 @@ export type Campaign = {
   points_amount?: number;
   partner: { id: string; alias: string; business_name: string; business_type: string } | null;
   already_redeemed?: boolean;
+
+  can_redeem?: boolean;
+
+  status_text?: string;
+
+  status_color?: "green" | "yellow" | "red";
+
+  redemption_label?: string;
+
+  redemption_policy?: string;
 };
 
 function rewardBadge(c: Campaign) {
@@ -84,16 +94,31 @@ export default function Perks() {
               <View style={styles.body}>
                 <View style={styles.headRow}>
                   <Text style={styles.business} numberOfLines={1}>{c.partner?.business_name || c.partner?.alias || "Partner"}</Text>
-                  {c.already_redeemed && (
-                    <View style={styles.claimedPill}><Text style={styles.claimedText}>Claimed</Text></View>
-                  )}
+                  
                 </View>
                 <Text style={styles.cTitle}>{c.title}</Text>
-                <Text style={styles.cDesc} numberOfLines={2}>{c.description}</Text>
+                <Text style={styles.policy}>
+                    {c.redemption_label}
+                </Text>
+
+                <Text
+                    style={[
+                        styles.status,
+                        c.status_color === "green"
+                            ? styles.green
+                            : c.status_color === "yellow"
+                            ? styles.yellow
+                            : styles.red,
+                    ]}
+                >
+                    {c.status_text}
+                </Text>
                 <View style={styles.rewardRow}>
                   <Ionicons name="gift-outline" size={14} color={colors.brand} />
                   <Text style={styles.reward}>{rewardBadge(c)}</Text>
                 </View>
+                <Text style={styles.cDesc} numberOfLines={2}>{c.description}</Text>
+                
               </View>
             </Pressable>
           ))}
@@ -121,5 +146,24 @@ const styles = StyleSheet.create({
   cTitle: { fontSize: font.base + 2, fontWeight: "800", color: colors.onSurface },
   cDesc: { fontSize: font.sm, color: colors.onSurfaceTertiary, lineHeight: 18 },
   rewardRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
+  policy: {
+    marginTop: 4,
+    color: colors.brand,
+    fontWeight: "800",
+},
+status: {
+    marginTop: 2,
+    fontSize: font.sm,
+    fontWeight: "700",
+},
+green: {
+    color: colors.success,
+},
+yellow: {
+    color: "#EAB308",
+},
+red: {
+    color: colors.error,
+},
   reward: { color: colors.onBrandTertiary, fontWeight: "700", fontSize: font.sm },
 });

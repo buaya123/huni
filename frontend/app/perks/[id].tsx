@@ -32,7 +32,7 @@ export default function PerkDetail() {
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         {c.images[0] && <Image source={{ uri: imageUrl(c.images[0]) }} style={styles.hero} />}
         <View style={styles.body}>
-          <Text style={styles.business}>{c.partner?.business_name || c.partner?.alias || "Partner"}</Text>
+          <Text style={styles.business} numberOfLines={1}></Text><Text style={styles.business}>{c.partner?.business_name || c.partner?.alias || "Partner"}</Text>
           <Text style={styles.name}>{c.title}</Text>
           <View style={styles.rewardCard}>
             <Ionicons name="gift" size={20} color={colors.onBrandTertiary} />
@@ -51,6 +51,47 @@ export default function PerkDetail() {
               )}
             </View>
           </View>
+          <View style={styles.statusCard}>
+
+    <View style={styles.statusRow}>
+
+        <Text style={styles.statusLabel}>
+            Status
+        </Text>
+
+        <Text
+            style={[
+                styles.statusValue,
+                c.status_color === "green"
+                    ? styles.green
+                    : c.status_color === "yellow"
+                    ? styles.yellow
+                    : styles.red,
+            ]}
+        >
+            {c.status_text}
+        </Text>
+
+    </View>
+
+    <View style={styles.divider} />
+
+    <View style={styles.statusRow}>
+
+        <Text style={styles.statusLabel}>
+            Redemption
+        </Text>
+
+        <Text style={styles.policyValue}>
+            {c.redemption_label}
+        </Text>
+
+    </View>
+
+</View>
+<Text style={styles.sectionTitle}>
+    Description
+</Text>
           <Text style={styles.desc}>{c.description}</Text>
           {!!c.terms && (
             <View style={styles.terms}>
@@ -99,5 +140,88 @@ const styles = StyleSheet.create({
   howtoTitle: { fontWeight: "800", color: colors.onSurface },
   howtoStep: { color: colors.onSurfaceTertiary, fontSize: font.sm },
   claimed: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceTertiary, padding: spacing.md, borderRadius: radius.md },
+  statusCard: {
+
+    backgroundColor: colors.surfaceSecondary,
+
+    borderRadius: radius.md,
+
+    borderWidth: 1,
+
+    borderColor: colors.border,
+
+    padding: spacing.md,
+
+    gap: spacing.sm,
+
+},
+
+statusRow: {
+
+    flexDirection: "row",
+
+    justifyContent: "space-between",
+
+    alignItems: "center",
+
+},
+
+statusLabel: {
+
+    color: colors.muted,
+
+    fontWeight: "700",
+
+},
+
+statusValue: {
+
+    fontWeight: "800",
+
+},
+
+policyValue: {
+
+    color: colors.brand,
+
+    fontWeight: "800",
+
+},
+
+divider: {
+
+    height: 1,
+
+    backgroundColor: colors.border,
+
+},
+
+sectionTitle: {
+
+    fontWeight: "800",
+
+    color: colors.onSurface,
+
+    marginTop: spacing.sm,
+
+},
+
+green: {
+
+    color: colors.success,
+
+},
+
+yellow: {
+
+    color: "#EAB308",
+
+},
+
+red: {
+
+    color: colors.error,
+
+},
   claimedText: { color: colors.success, fontWeight: "700" },
 });

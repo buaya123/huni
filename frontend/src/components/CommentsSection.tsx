@@ -19,7 +19,7 @@ import { pickImages, uploadImages, type PickedImage } from "@/src/utils/imagePic
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { useRouter } from "expo-router";
 
-const router = useRouter();
+
 
 export type Comment = {
   id: string;
@@ -119,6 +119,8 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
   const [viewer, setViewer] = useState<{ images: string[]; index: number } | null>(null);
   const inputRef = React.useRef<TextInput>(null);
 
+  const router = useRouter();
+
   const threadRows = React.useMemo(() => buildThreadRows(comments, collapsed), [comments, collapsed]);
 
   const toggleCollapse = (commentId: string) => {
@@ -196,12 +198,15 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    style={{ flex: 1 }}
+    behavior={Platform.OS === "ios" ? "padding" : "height"}
+    keyboardVerticalOffset={0}
+>
       <FlatList
+        contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets={true}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
+        keyboardDismissMode="on-drag"
         testID="comments-list"
         data={threadRows}
         keyExtractor={(r) => r.comment.id}
@@ -423,10 +428,15 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
               ref={inputRef}
               value={text}
               onChangeText={setText}
-              placeholder={replyTo ? `Reply to ${replyTo.author.alias}...` : "Add a kind comment..."}
+              placeholder={replyTo ? `Reply to ${replyTo.author.alias}...` : "Add a comment..."}
               placeholderTextColor={colors.muted}
               style={styles.input}
               multiline
+              onFocus={() => {
+                  setTimeout(() => {
+                      inputRef.current?.focus();
+                  }, 50);
+              }}
             />
             <Pressable
               onPress={submit}

@@ -17,6 +17,8 @@ import { AdCard, type Ad } from "@/src/components/AdCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
+const PAGE_SIZE = 5;
+
 type FeedItem = (Post & { type?: undefined }) | Ad;
 
 const TABS: { key: "latest" | "trending" | "nearby" | "pulse"; label: string }[] = [
@@ -32,31 +34,88 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const [offset, setOffset] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
+ const load = useCallback(async () => {
+
     try {
-      const rows = await api.get<any>(`/posts?tab=${tab}`);
 
-console.log("ROWS TYPE:", typeof rows);
+        const rows = await api.get<FeedItem[]>(
+            `/posts?tab=${tab}&offset=0&limit=${PAGE_SIZE}`
+        );
 
-if (typeof rows === "string") {
-    console.log(rows.substring(0, 300));
-}
-      
-      console.log("POSTS RESPONSE TYPE:", typeof rows);
-console.log("POSTS RESPONSE:", rows);
-      setPosts(rows);
+        setPosts(rows);
+
+        setOffset(PAGE_SIZE);
+
+        setHasMore(rows.length >= PAGE_SIZE);
+
     } catch {
-      setPosts([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [tab]);
 
-  useEffect(() => {
+        setPosts([]);
+
+        setHasMore(false);
+
+    } finally {
+
+        setLoading(false);
+
+        setRefreshing(false);
+
+    }
+
+}, [tab]);
+
+const loadMore = useCallback(async () => {
+
+    if (loadingMore || loading || !hasMore)
+        return;
+
+    try {
+
+        setLoadingMore(true);
+
+        const rows = await api.get<FeedItem[]>(
+            `/posts?tab=${tab}&offset=${offset}&limit=${PAGE_SIZE}`
+        );
+
+        if (rows.length === 0) {
+
+            setHasMore(false);
+            return;
+
+        }
+
+        setPosts((prev) => [...prev, ...rows]);
+
+        setOffset((prev) => prev + PAGE_SIZE);
+
+        if (rows.length < PAGE_SIZE)
+            setHasMore(false);
+
+    } finally {
+
+        setLoadingMore(false);
+
+    }
+
+}, [tab, offset, loadingMore, loading, hasMore]);
+
+useEffect(() => {
+
+    setPosts([]);
+
+    setOffset(0);
+
+    setHasMore(true);
+
     setLoading(true);
+
     load();
-  }, [load]);
+
+}, [load]);
 
   useFocusEffect(
     useCallback(() => {
@@ -102,11 +161,20 @@ console.log("POSTS RESPONSE:", rows);
         <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
       ) : (
         <FlatList
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.6}
           testID="feed-list"
           data={posts}
-          keyExtractor={(p) => p.id}
+          keyExtractor={(item, index) => `${item.id}-${index}`}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
+          ListFooterComponent={
+              loadingMore ? (
+                  <View style={{ paddingVertical: 24 }}>
+                      <ActivityIndicator color={colors.brand} />
+                  </View>
+              ) : null
+          }
           ListEmptyComponent={
             <EmptyState
               title="No stories here yet."
@@ -116,6 +184,8 @@ console.log("POSTS RESPONSE:", rows);
           renderItem={({ item }) => {
 
     console.log("HOME ITEM", item);
+
+    
 
     if ((item as any).type === "ad") {
 

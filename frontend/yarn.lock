@@ -6143,7 +6143,7 @@ prompts@^2.3.2:
     kleur "^3.0.3"
     sisteransi "^1.0.5"
 
-prop-types@^15.8.0, prop-types@^15.8.1:
+prop-types@^15.6.2, prop-types@^15.8.0, prop-types@^15.8.1:
   version "15.8.1"
   resolved "https://registry.npmjs.org/prop-types/-/prop-types-15.8.1.tgz"
   integrity sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==
@@ -6286,10 +6286,30 @@ react-native-gesture-handler@*, react-native-gesture-handler@2.28.0:
     hoist-non-react-statics "^3.3.0"
     invariant "^2.2.4"
 
+react-native-iphone-x-helper@^1.0.3:
+  version "1.3.1"
+  resolved "https://registry.npmjs.org/react-native-iphone-x-helper/-/react-native-iphone-x-helper-1.3.1.tgz"
+  integrity sha512-HOf0jzRnq2/aFUcdCJ9w9JGzN3gdEg0zFE4FyYlp4jtidqU03D5X7ZegGKfT1EWteR0gPBGp9ye5T5FvSWi9Yg==
+
 react-native-is-edge-to-edge@^1.1.6, react-native-is-edge-to-edge@^1.2.1:
   version "1.3.1"
   resolved "https://registry.npmjs.org/react-native-is-edge-to-edge/-/react-native-is-edge-to-edge-1.3.1.tgz"
   integrity sha512-NIXU/iT5+ORyCc7p0z2nnlkouYKX425vuU1OEm6bMMtWWR9yvb+Xg5AZmImTKoF9abxCPqrKC3rOZsKzUYgYZA==
+
+react-native-keyboard-aware-scroll-view@0.9.5:
+  version "0.9.5"
+  resolved "https://registry.npmjs.org/react-native-keyboard-aware-scroll-view/-/react-native-keyboard-aware-scroll-view-0.9.5.tgz"
+  integrity sha512-XwfRn+T/qBH9WjTWIBiJD2hPWg0yJvtaEw6RtPCa5/PYHabzBaWxYBOl0usXN/368BL1XktnZPh8C2lmTpOREA==
+  dependencies:
+    prop-types "^15.6.2"
+    react-native-iphone-x-helper "^1.0.3"
+
+react-native-keyboard-controller@1.22.0:
+  version "1.22.0"
+  resolved "https://registry.npmjs.org/react-native-keyboard-controller/-/react-native-keyboard-controller-1.22.0.tgz"
+  integrity sha512-FT8/xmb69o8rlqAxHg808p+m6+wigDLYWATKOnUgOoF2XlE2HV/2uPD6umKUg9sL6EX/uuLzoLMdsJlJGtwO9g==
+  dependencies:
+    react-native-is-edge-to-edge "^1.2.1"
 
 react-native-qrcode-svg@6.3.21:
   version "6.3.21"
@@ -6300,7 +6320,7 @@ react-native-qrcode-svg@6.3.21:
     qrcode "^1.5.4"
     text-encoding "^0.7.0"
 
-react-native-reanimated@*, react-native-reanimated@4.1.1:
+react-native-reanimated@*, react-native-reanimated@>=3.0.0, react-native-reanimated@4.1.1:
   version "4.1.1"
   resolved "https://registry.npmjs.org/react-native-reanimated/-/react-native-reanimated-4.1.1.tgz"
   integrity sha512-QWe8EJJFOQW92b/sl551u3uPeLT5TUx2eAXkga8Kcj2w+Qs/Yh6fsz5sN8iyNO6zcoSNFqYQLICD6dvBIFGzbg==
@@ -6370,7 +6390,7 @@ react-native-worklets@>=0.5.0, react-native-worklets@0.5.1:
     convert-source-map "^2.0.0"
     semver "7.7.2"
 
-react-native@*, "react-native@^0.0.0-0 || >=0.65 <1.0", react-native@>=0.63.4, react-native@0.81.5:
+react-native@*, "react-native@^0.0.0-0 || >=0.65 <1.0", react-native@>=0.42.0, react-native@>=0.48.4, react-native@>=0.63.4, react-native@0.81.5:
   version "0.81.5"
   resolved "https://registry.npmjs.org/react-native/-/react-native-0.81.5.tgz"
   integrity sha512-1w+/oSjEXZjMqsIvmkCRsOc8UBYv163bTWKTI8+1mxztvQPhCRYGTvZ/PL1w16xXHneIj/SLGfxWg2GWN2uexw==

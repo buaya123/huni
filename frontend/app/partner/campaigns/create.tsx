@@ -1,13 +1,16 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 export default function CreateCampaign() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+    const fieldY = useRef<Record<string, number>>({});
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [discountLabel, setDiscountLabel] = useState("");
@@ -24,6 +27,23 @@ export default function CreateCampaign() {
       "minutes" | "hours" | "days" | "weeks" | "months"
   >("days");
   const [saving, setSaving] = useState(false);
+
+const scrollToField = (name: string) => {
+
+    const y = fieldY.current[name];
+
+    if (y === undefined) return;
+
+    setTimeout(() => {
+
+        scrollRef.current?.scrollTo({
+            y: Math.max(0, y - 40),
+            animated: true,
+        });
+
+    }, 250);
+
+};
 
   const submit = async () => {
     if (title.trim().length < 2 || description.trim().length < 2) {
@@ -64,9 +84,18 @@ export default function CreateCampaign() {
         <Text style={styles.title}>New Campaign</Text>
         <View style={{ width: 26 }} />
       </View>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl }} keyboardShouldPersistTaps="handled">
-          <View style={styles.infoBox}>
+      
+        <KeyboardAwareScrollView
+            enableOnAndroid
+            extraScrollHeight={40}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{
+                padding: spacing.lg,
+                gap: spacing.md,
+                paddingBottom: spacing.xxl,
+            }}
+        >  
+        <View style={styles.infoBox}>
             <Ionicons name="information-circle" size={18} color={colors.brand} />
             <Text style={styles.infoText}>
               Describe your offer. Huni admins will decide the EXP & Token payout per redemption when they approve your campaign package.
@@ -92,13 +121,26 @@ export default function CreateCampaign() {
           </View>
 
           <View style={styles.rowGap}>
-            <View style={[styles.section, { flex: 1 }]}>
+            <View
+                style={[styles.section, { flex: 1 }]}
+                onLayout={(e) => {
+                    fieldY.current.startDate = e.nativeEvent.layout.y;
+                }}
+            >
               <Text style={styles.label}>Start (YYYY-MM-DD)</Text>
-              <TextInput style={styles.input} value={startDate} onChangeText={setStartDate} placeholder="optional" placeholderTextColor={colors.muted} autoCapitalize="none" />
+              <TextInput onFocus={() => scrollToField("startDate")} style={styles.input} value={startDate} onChangeText={setStartDate} placeholder="optional" placeholderTextColor={colors.muted} autoCapitalize="none" />
             </View>
-            <View style={[styles.section, { flex: 1 }]}>
+            <View
+                style={[
+                    styles.section,
+                    { flex: 1 },
+                ]}
+                onLayout={(e) => {
+                    fieldY.current.endDate = e.nativeEvent.layout.y;
+                }}
+            >
               <Text style={styles.label}>End (YYYY-MM-DD)</Text>
-              <TextInput style={styles.input} value={endDate} onChangeText={setEndDate} placeholder="optional" placeholderTextColor={colors.muted} autoCapitalize="none" />
+              <TextInput onFocus={() => scrollToField("endDate")} style={styles.input} value={endDate} onChangeText={setEndDate} placeholder="optional" placeholderTextColor={colors.muted} autoCapitalize="none" />
             </View>
           </View>
           <View style={styles.section}>
@@ -240,8 +282,7 @@ export default function CreateCampaign() {
             {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>Submit for approval</Text>}
           </Pressable>
           <Text style={styles.footnote}>Approval usually takes a few hours. You&apos;ll be notified.</Text>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }

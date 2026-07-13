@@ -112,7 +112,7 @@ export default function PostDetail() {
         </View>
       )}
 
-      <View style={{ flex: 1 }}>
+
     <CommentsSection
         targetId={id}
         header={
@@ -137,7 +137,6 @@ export default function PostDetail() {
             )
         }
     />
-</View>
     </SafeAreaView>
   );
 }

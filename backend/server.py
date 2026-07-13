@@ -848,7 +848,7 @@ async def create_post(
     return await _hydrate_post(doc, user["id"])
 
 
-async def _inject_ads(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def _inject_ads(items: List[Dict[str, Any]],offset: int = 0,) -> List[Dict[str, Any]]:
     """Insert weighted-random ads into a feed, one every N posts (admin setting)."""
     if len(items) < 2:
         return items
@@ -858,39 +858,68 @@ async def _inject_ads(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     s = await db.settings.find_one({"key": "ads"}, {"_id": 0})
     every_n = (s or {}).get("ad_every_n_posts", 5)
     slots = max(1, len(items) // every_n)
+    
+    last_ad_id = None
+
+    def choose_weighted_ad():
+
+        nonlocal last_ad_id
+
+        candidates = ads
+
+        if len(ads) > 1 and last_ad_id:
+
+            filtered = [a for a in ads if a["id"] != last_ad_id]
+
+            if filtered:
+                candidates = filtered
+
+        total = sum(ad.get("frequency_weight", 5) for ad in candidates)
+
+        r = random.uniform(0, total)
+
+        acc = 0
+
+        chosen = candidates[-1]
+
+        for ad in candidates:
+
+            acc += ad.get("frequency_weight", 5)
+
+            if r <= acc:
+                chosen = ad
+                break
+
+        last_ad_id = chosen["id"]
+
+        return chosen
 
     # weighted sampling without replacement (frequency_weight 1-10)
-    picked: List[Dict[str, Any]] = []
-    pool = ads[:]
-    for _ in range(min(slots, len(pool))):
-        total = sum(a.get("frequency_weight", 5) for a in pool)
-        r = random.uniform(0, total)
-        acc = 0.0
-        chosen = pool[-1]
-        for a in pool:
-            acc += a.get("frequency_weight", 5)
-            if r <= acc:
-                chosen = a
-                break
-        pool.remove(chosen)
-        picked.append(chosen)
+    
 
     out: List[Dict[str, Any]] = []
-    ai = 0
+
     for i, p in enumerate(items):
+
         out.append(p)
-        if (i + 1) % every_n == 0 and ai < len(picked):
-            out.append(_hydrate_ad(picked[ai]))
-            ai += 1
-    if ai == 0 and picked:  # feed shorter than every_n — still show one ad
-        out.insert(min(2, len(out)), _hydrate_ad(picked[0]))
+
+        global_index = offset + i + 1
+
+        if global_index % every_n == 0:
+
+            ad = choose_weighted_ad()
+
+            if ad:
+                out.append(_hydrate_ad(ad))
+
     return out
 
 
 @api.get("/posts")
 async def list_posts(
     tab: str = Query(default="latest", pattern="^(latest|trending|nearby|pulse)$"),
-    limit: int = 30,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(15, ge=1, le=50),
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
     # exclude blocked authors
@@ -920,12 +949,15 @@ async def list_posts(
         scored.sort(key=lambda x: x[0], reverse=True)
         return await _inject_ads([await _hydrate_post(p, user["id"]) for _, p in scored[:limit]])
 
-    cursor = db.posts.find(query, {"_id": 0}).sort(sort).limit(limit)
+    cursor = (
+        db.posts.find(query, {"_id": 0}).sort(sort).skip(offset).limit(limit)
+    )
+
     rows = await cursor.to_list(limit)
     hydrated = [await _hydrate_post(p, user["id"]) for p in rows]
     if tab == "pulse":
         return hydrated
-    return await _inject_ads(hydrated)
+    return await _inject_ads(hydrated, offset)
 
 
 @api.get("/posts/{post_id}")
@@ -1460,12 +1492,12 @@ async def _campaign_redemption_state(
 
             elif unit == "days":
 
-                current_date = now().date()
+                redeemed_date = redeemed.date()
 
                 next_time = datetime.combine(
-                    current_date + timedelta(days=value),
+                    redeemed_date + timedelta(days=value),
                     time.min,
-                    tzinfo=now().tzinfo,
+                    tzinfo=redeemed.tzinfo,
                 )
 
             elif unit == "weeks":
@@ -1799,11 +1831,12 @@ async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(ge
             elif unit == "hours":
                 next_time = redeemed + timedelta(hours=value)
             elif unit == "days":
-                today = now().date()
+                redeemed_date = redeemed.date()
+
                 next_time = datetime.combine(
-                    today + timedelta(days=value),
+                    redeemed_date + timedelta(days=value),
                     time.min,
-                    tzinfo=now().tzinfo,
+                    tzinfo=redeemed.tzinfo,
                 )
             elif unit == "weeks":
                 next_time = redeemed + timedelta(weeks=value)

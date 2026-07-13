@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  KeyboardAvoidingView,
+   Keyboard,
+  KeyboardEvent,
+  Animated,
   Platform,
   Pressable,
   StyleSheet,
@@ -118,6 +120,8 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
   const [picking, setPicking] = useState(false);
   const [viewer, setViewer] = useState<{ images: string[]; index: number } | null>(null);
   const inputRef = React.useRef<TextInput>(null);
+  const [composerHeight, setComposerHeight] = useState(0);
+  const keyboardOffset = React.useRef(new Animated.Value(0)).current;
 
   const router = useRouter();
 
@@ -196,12 +200,57 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
     } catch { /* ignore */ }
   };
 
+  useEffect(() => {
+
+    const show = Keyboard.addListener(
+        Platform.OS === "ios"
+            ? "keyboardWillShow"
+            : "keyboardDidShow",
+        (e: KeyboardEvent) => {
+
+            Animated.spring(
+                keyboardOffset,
+                {
+                    toValue: e.endCoordinates.height,
+                    damping: 18,
+                    stiffness: 200,
+                    mass: 0.9,
+                    useNativeDriver: false,
+                }
+            ).start();
+
+        }
+    );
+
+    const hide = Keyboard.addListener(
+        Platform.OS === "ios"
+            ? "keyboardWillHide"
+            : "keyboardDidHide",
+        () => {
+
+            Animated.timing(
+                keyboardOffset,
+                {
+                    toValue: 0,
+                    duration: 250,
+                    useNativeDriver: false,
+                }
+            ).start();
+
+        }
+    );
+
+    return () => {
+
+        show.remove();
+        hide.remove();
+
+    };
+
+}, []);
+
   return (
-    <KeyboardAvoidingView
-    style={{ flex: 1 }}
-    behavior={Platform.OS === "ios" ? "padding" : "height"}
-    keyboardVerticalOffset={0}
->
+    <View style={styles.container}>
       <FlatList
         contentInsetAdjustmentBehavior="automatic"
         automaticallyAdjustKeyboardInsets={true}
@@ -211,8 +260,8 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
         data={threadRows}
         keyExtractor={(r) => r.comment.id}
         contentContainerStyle={{
-          padding: spacing.lg,
-          paddingBottom: 110,
+            padding: spacing.lg,
+            paddingBottom: composerHeight + spacing.lg,
         }}
         ListHeaderComponent={
           <View>
@@ -379,9 +428,23 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
             </View>
           );
         }}
-      />
+      /><View style={styles.container}>
       {commentsEnabled && (
-        <View style={styles.inputBar}>
+        <Animated.View
+            style={[
+                styles.inputBar,
+                {
+                    transform: [
+                        {
+                            translateY: Animated.multiply(
+                                keyboardOffset,
+                                -1
+                            ),
+                        },
+                    ],
+                },
+            ]}
+        >
           {replyTo && (
             <View style={styles.replyBanner} testID="reply-banner">
               <Text style={styles.replyBannerText} numberOfLines={1}>
@@ -432,11 +495,9 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
               placeholderTextColor={colors.muted}
               style={styles.input}
               multiline
-              onFocus={() => {
-                  setTimeout(() => {
-                      inputRef.current?.focus();
-                  }, 50);
-              }}
+              textAlignVertical="top"
+              scrollEnabled={false}
+              
             />
             <Pressable
               onPress={submit}
@@ -451,16 +512,20 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
               )}
             </Pressable>
           </View>
-        </View>
+        </Animated.View>
       )}
+      </View>
       {viewer && (
         <ImageViewer visible images={viewer.images} initialIndex={viewer.index} onClose={() => setViewer(null)} />
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+},
   commentsTitle: { fontSize: font.base, fontWeight: "700", color: colors.onSurface, marginTop: spacing.md, marginBottom: spacing.sm },
   emptyC: { color: colors.muted, textAlign: "center", padding: spacing.lg },
   disabledNote: {
@@ -520,6 +585,10 @@ const styles = StyleSheet.create({
   inputBar: {
     padding: spacing.md, backgroundColor: colors.surfaceSecondary,
     borderTopWidth: 1, borderTopColor: colors.border, gap: spacing.sm,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   input: {
     flex: 1, backgroundColor: colors.surface, borderRadius: radius.lg,

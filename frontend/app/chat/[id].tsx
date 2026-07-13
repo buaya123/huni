@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  KeyboardAvoidingView,
+  Keyboard,
+  KeyboardEvent,
+  Animated,
   Platform,
   Pressable,
   StyleSheet,
@@ -12,6 +14,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
@@ -50,6 +53,7 @@ export default function ChatDetail() {
   });
   const [showActions, setShowActions] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +91,55 @@ export default function ChatDetail() {
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
   }, [messages.length]);
+
+  useEffect(() => {
+
+    const show = Keyboard.addListener(
+        Platform.OS === "ios"
+            ? "keyboardWillShow"
+            : "keyboardDidShow",
+        (e: KeyboardEvent) => {
+
+            Animated.spring(
+                keyboardOffset,
+                {
+                    toValue: e.endCoordinates.height,
+                    damping: 18,
+                    stiffness: 200,
+                    mass: 0.9,
+                    useNativeDriver: false,
+                }
+            ).start();
+
+        }
+    );
+
+    const hide = Keyboard.addListener(
+        Platform.OS === "ios"
+            ? "keyboardWillHide"
+            : "keyboardDidHide",
+        () => {
+
+            Animated.timing(
+                keyboardOffset,
+                {
+                    toValue: 0,
+                    duration: 250,
+                    useNativeDriver: false,
+                }
+            ).start();
+
+        }
+    );
+
+    return () => {
+
+        show.remove();
+        hide.remove();
+
+    };
+
+}, []);
 
   const submit = async () => {
     if (status.blocked) return;
@@ -153,7 +206,7 @@ export default function ChatDetail() {
         </View>
       )}
 
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+      
         {status.blocked && (
         <View style={styles.blockBanner} testID="chat-block-banner">
           <Ionicons
@@ -177,7 +230,11 @@ export default function ChatDetail() {
             ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
-            contentContainerStyle={{ padding: spacing.lg, gap: spacing.sm }}
+            contentContainerStyle={{
+                padding: spacing.lg,
+                gap: spacing.sm,
+                paddingBottom: 90,
+            }}
             ListEmptyComponent={<Text style={styles.emptyText}>Say hi anonymously.</Text>}
             renderItem={({ item }) => {
               const mine = item.sender_id === user?.id;
@@ -192,7 +249,21 @@ export default function ChatDetail() {
           />
         )}
 
-        <View style={styles.inputBar}>
+        <Animated.View
+    style={[
+        styles.inputBar,
+        {
+            transform: [
+                {
+                    translateY: Animated.add(
+                        Animated.multiply(keyboardOffset, -1),
+                        -16
+                    ),
+                },
+            ],
+        },
+    ]}
+>
           <TextInput
             editable={!status.blocked}
             testID="message-input"
@@ -208,12 +279,17 @@ export default function ChatDetail() {
             placeholderTextColor={colors.muted}
             style={styles.input}
             multiline
+            onFocus={() =>
+                setTimeout(
+                    () => listRef.current?.scrollToEnd({ animated: true }),
+                    100
+                )
+            }
           />
           <Pressable onPress={submit} disabled={status.blocked ||!text.trim() ||sending} style={styles.sendBtn} testID="send-message-btn">
             <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
           </Pressable>
-        </View>
-      </KeyboardAvoidingView>
+        </Animated.View>
     </SafeAreaView>
   );
 }
@@ -240,9 +316,23 @@ const styles = StyleSheet.create({
   other: { backgroundColor: colors.surfaceSecondary, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: colors.border },
   bubbleText: { fontSize: font.base, color: colors.onSurface, lineHeight: 20 },
   inputBar: {
-    flexDirection: "row", alignItems: "flex-end", gap: spacing.sm,
-    padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
-  },
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.sm,
+
+    padding: spacing.md,
+
+    backgroundColor: colors.surfaceSecondary,
+
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+
+    position: "absolute",
+
+    left: 0,
+    right: 0,
+    bottom: 0,
+},
   input: {
     flex: 1, backgroundColor: colors.surface, borderRadius: radius.lg,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,

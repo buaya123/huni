@@ -30,20 +30,36 @@ export default function PartnerHub() {
   const isPartner = user?.role === "partner" || user?.role === "admin";
 
   const load = useCallback(async () => {
+
     try {
 
-    const rows = await api.get<any[]>(
-        "/scanner/partners"
-    );
+        setLoading(true);
 
-    setScannerPartners(rows);
+        const [campaigns, partners] = await Promise.all([
 
-} catch {
+            api.get<Campaign[]>("/partner/campaigns"),
+            api.get<any[]>("/scanner/partners"),
 
-    setScannerPartners([]);
+        ]);
 
-}
-  }, []);
+        setItems(campaigns);
+        setScannerPartners(partners);
+
+    } catch (e) {
+
+        console.log(e);
+
+        setItems([]);
+        setScannerPartners([]);
+
+    } finally {
+
+        setLoading(false);
+        setRefreshing(false);
+
+    }
+
+}, []);
 
   useEffect(() => { if (isPartner) load(); else setLoading(false); }, [isPartner, load]);
   useFocusEffect(useCallback(() => { if (isPartner) load(); }, [isPartner, load]));

@@ -11,6 +11,7 @@ import {
   Text,
   TextInput,
   View,
+  InteractionManager,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -53,27 +54,106 @@ export default function ChatDetail() {
   });
   const [showActions, setShowActions] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
+  const scrollOffset = useRef(0);
+const contentHeight = useRef(0);
   const keyboardOffset = useRef(new Animated.Value(0)).current;
+  const shouldScrollToBottom = useRef(true);
+  const PAGE_SIZE = 30;
 
-  const load = useCallback(async () => {
+  const [offset, setOffset] = useState(0);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasOlder, setHasOlder] = useState(true);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+const load = useCallback(async () => {
     try {
-      const [rows, conversationStatus] = await Promise.all([
-        api.get<Message[]>(`/chat/${id}/messages`),
-        api.get<ConversationStatus>(`/chat/${id}/status`),
-      ]);
 
-      setMessages(rows);
-      setStatus(conversationStatus);
+        const [rows, conversationStatus] = await Promise.all([
+            api.get<Message[]>(
+                `/chat/${id}/messages?offset=0&limit=${PAGE_SIZE}`
+            ),
+            api.get<ConversationStatus>(
+                `/chat/${id}/status`
+            ),
+        ]);
+
+        setMessages(rows);
+
+        setStatus(conversationStatus);
+
+        setOffset(rows.length);
+
+        setHasOlder(rows.length === PAGE_SIZE);
+
     } catch {
-      setMessages([]);
+
+        setMessages([]);
+
+        setHasOlder(false);
+
     } finally {
-      setLoading(false);
+
+        setLoading(false);
+
     }
-  }, [id]);
+
+}, [id]);
+
+const loadOlder = useCallback(async () => {
+
+    if (loadingOlder || !hasOlder)
+        return;
+
+    try {
+
+        setLoadingOlder(true);
+
+        const beforeHeight = contentHeight.current;
+
+        const rows = await api.get<Message[]>(
+            `/chat/${id}/messages?offset=${offset}&limit=${PAGE_SIZE}`
+        );
+
+        if (rows.length === 0) {
+
+            setHasOlder(false);
+            return;
+
+        }
+
+        setMessages(prev => [...rows, ...prev]);
+
+        setOffset(prev => prev + rows.length);
+
+        if (rows.length < PAGE_SIZE)
+            setHasOlder(false);
+
+
+
+            requestAnimationFrame(() => {
+
+                const addedHeight =
+                    contentHeight.current - beforeHeight;
+
+                listRef.current?.scrollToOffset({
+                    offset: scrollOffset.current + addedHeight,
+                    animated: false,
+                });
+
+
+        });
+
+    } finally {
+
+        setLoadingOlder(false);
+
+    }
+
+}, [id, offset, hasOlder, loadingOlder]);
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
+useEffect(() => {
     const unsub = subscribe((ev) => {
       if (ev.type === "message" && ev.conversation_id === id) {
         const msg = ev.message as Message;
@@ -81,16 +161,33 @@ export default function ChatDetail() {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
         });
+        // 👇 only auto-scroll if the user is already near the bottom,
+        // so it doesn't yank them down mid-scrollback
+        if (scrollOffset.current < 150) {
+          shouldScrollToBottom.current = true;
+        }
       }
     });
     return unsub;
-  }, [id, subscribe]);
+}, [id, subscribe]);
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+  const initialScrollDone = useRef(false);
+
+useEffect(() => {
+
+    if (
+        !loading &&
+        messages.length > 0 &&
+        !initialScrollDone.current
+    ) {
+
+        initialScrollDone.current = true;
+
+        shouldScrollToBottom.current = true;
+
     }
-  }, [messages.length]);
+
+}, [loading, messages.length]);
 
   useEffect(() => {
 
@@ -110,6 +207,13 @@ export default function ChatDetail() {
                     useNativeDriver: false,
                 }
             ).start();
+            setKeyboardHeight(e.endCoordinates.height);
+
+            requestAnimationFrame(() => {
+                listRef.current?.scrollToEnd({
+                    animated: true,
+                });
+            });
 
         }
     );
@@ -128,6 +232,7 @@ export default function ChatDetail() {
                     useNativeDriver: false,
                 }
             ).start();
+            setKeyboardHeight(0);
 
         }
     );
@@ -141,7 +246,7 @@ export default function ChatDetail() {
 
 }, []);
 
-  const submit = async () => {
+ const submit = async () => {
     if (status.blocked) return;
     if (!text.trim() || sending) return;
     setSending(true);
@@ -150,12 +255,13 @@ export default function ChatDetail() {
     try {
       const msg = await api.post<Message>(`/chat/${id}/messages`, { content: tmp });
       setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      shouldScrollToBottom.current = true;   // 👈 always jump to bottom for your own message
     } catch {
       setText(tmp);
     } finally {
       setSending(false);
     }
-  };
+};
 
   const doBlock = async () => {
     setShowActions(false);
@@ -221,7 +327,7 @@ export default function ChatDetail() {
               : "You can't send messages to this user."}
           </Text>
         </View>
-      )}
+      )}<View style={{ flex: 1 }}>
         {loading ? (
           <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
         ) : (
@@ -230,10 +336,50 @@ export default function ChatDetail() {
             ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
+            onScroll={(e) => {
+              console.log(
+    "offset:",
+    e.nativeEvent.contentOffset.y
+);
+            scrollOffset.current =
+                e.nativeEvent.contentOffset.y;
+            }}
+            onContentSizeChange={(_, h) => {
+
+                contentHeight.current = h;
+                console.log(
+    "contentHeight:",
+    h
+);
+
+                if (shouldScrollToBottom.current) {
+
+                    shouldScrollToBottom.current = false;
+
+                    InteractionManager.runAfterInteractions(() => {
+
+                        listRef.current?.scrollToOffset({
+                            offset: 999999,
+                            animated: false,
+                        });
+
+                    });
+
+                }
+
+            }}
+            onMomentumScrollEnd={() => {
+                if (
+                    scrollOffset.current < 150
+                ) {
+                    loadOlder();
+                }
+
+            }}
             contentContainerStyle={{
                 padding: spacing.lg,
                 gap: spacing.sm,
-                paddingBottom: 90,
+                paddingBottom: keyboardHeight + 90,
             }}
             ListEmptyComponent={<Text style={styles.emptyText}>Say hi anonymously.</Text>}
             renderItem={({ item }) => {
@@ -248,6 +394,7 @@ export default function ChatDetail() {
             }}
           />
         )}
+        </View>
 
         <Animated.View
     style={[
@@ -279,12 +426,7 @@ export default function ChatDetail() {
             placeholderTextColor={colors.muted}
             style={styles.input}
             multiline
-            onFocus={() =>
-                setTimeout(
-                    () => listRef.current?.scrollToEnd({ animated: true }),
-                    100
-                )
-            }
+            
           />
           <Pressable onPress={submit} disabled={status.blocked ||!text.trim() ||sending} style={styles.sendBtn} testID="send-message-btn">
             <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />

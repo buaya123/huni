@@ -2800,16 +2800,56 @@ async def list_conversations(user: Dict[str, Any] = Depends(get_current_user)) -
 
 
 @api.get("/chat/{conversation_id}/messages")
-async def list_messages(conversation_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+async def list_messages(
+    conversation_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+
     conv = await db.conversations.find_one({"id": conversation_id})
+
     if not conv or user["id"] not in conv["participants"]:
         raise HTTPException(status_code=403, detail="Not a participant")
-    rows = await db.messages.find({"conversation_id": conversation_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
-    # mark all as read
-    await db.messages.update_many(
-        {"conversation_id": conversation_id, "sender_id": {"$ne": user["id"]}, "read_by": {"$ne": user["id"]}},
-        {"$addToSet": {"read_by": user["id"]}},
+
+    total = await db.messages.count_documents(
+        {"conversation_id": conversation_id}
     )
+
+    skip = max(total - offset - limit, 0)
+
+    fetch = min(limit, total - skip)
+
+    rows = await (
+        db.messages
+        .find(
+            {"conversation_id": conversation_id},
+            {"_id": 0},
+        )
+        .sort("created_at", 1)
+        .skip(skip)
+        .limit(fetch)
+        .to_list(fetch)
+    )
+
+    # Mark loaded messages as read
+    await db.messages.update_many(
+        {
+            "conversation_id": conversation_id,
+            "sender_id": {"$ne": user["id"]},
+            "read_by": {"$ne": user["id"]},
+        },
+        {
+            "$addToSet": {"read_by": user["id"]},
+        },
+    )
+
+    print("Returned messages:", len(rows))
+
+    if rows:
+        print("FIRST:", rows[0]["created_at"])
+        print("LAST :", rows[-1]["created_at"])
+
     return rows
 
 @api.get("/chat/{conversation_id}/status")

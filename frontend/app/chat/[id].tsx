@@ -11,7 +11,6 @@ import {
   Text,
   TextInput,
   View,
-  InteractionManager,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -38,6 +37,43 @@ type ConversationStatus = {
   blocked_by_other: boolean;
 };
 
+function formatTime(date: string) {
+
+    const d = new Date(date);
+
+    return d.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+    });
+
+}
+
+function formatDay(date: string) {
+
+    const d = new Date(date);
+
+    const today = new Date();
+
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (d.toDateString() === today.toDateString())
+        return "Today";
+
+    if (d.toDateString() === yesterday.toDateString())
+        return "Yesterday";
+
+    return d.toLocaleDateString([], {
+        month: "long",
+        day: "numeric",
+        year:
+            d.getFullYear() !== today.getFullYear()
+                ? "numeric"
+                : undefined,
+    });
+
+}
+
 export default function ChatDetail() {
   const { id, alias, userId } = useLocalSearchParams<{ id: string; alias?: string; userId?: string }>();
   const router = useRouter();
@@ -54,16 +90,16 @@ export default function ChatDetail() {
   });
   const [showActions, setShowActions] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
-  const scrollOffset = useRef(0);
-const contentHeight = useRef(0);
+
   const keyboardOffset = useRef(new Animated.Value(0)).current;
-  const shouldScrollToBottom = useRef(true);
   const PAGE_SIZE = 30;
 
   const [offset, setOffset] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasOlder, setHasOlder] = useState(true);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  const hasScrolled = useRef(false);
 
 const load = useCallback(async () => {
     try {
@@ -99,6 +135,7 @@ const load = useCallback(async () => {
 
 }, [id]);
 
+
 const loadOlder = useCallback(async () => {
 
     if (loadingOlder || !hasOlder)
@@ -107,8 +144,6 @@ const loadOlder = useCallback(async () => {
     try {
 
         setLoadingOlder(true);
-
-        const beforeHeight = contentHeight.current;
 
         const rows = await api.get<Message[]>(
             `/chat/${id}/messages?offset=${offset}&limit=${PAGE_SIZE}`
@@ -121,27 +156,15 @@ const loadOlder = useCallback(async () => {
 
         }
 
-        setMessages(prev => [...rows, ...prev]);
+        setMessages(prev => [
+            ...prev,
+            ...rows,
+        ]);
 
         setOffset(prev => prev + rows.length);
 
         if (rows.length < PAGE_SIZE)
             setHasOlder(false);
-
-
-
-            requestAnimationFrame(() => {
-
-                const addedHeight =
-                    contentHeight.current - beforeHeight;
-
-                listRef.current?.scrollToOffset({
-                    offset: scrollOffset.current + addedHeight,
-                    animated: false,
-                });
-
-
-        });
 
     } finally {
 
@@ -155,39 +178,22 @@ const loadOlder = useCallback(async () => {
 
 useEffect(() => {
     const unsub = subscribe((ev) => {
-      if (ev.type === "message" && ev.conversation_id === id) {
-        const msg = ev.message as Message;
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-        // 👇 only auto-scroll if the user is already near the bottom,
-        // so it doesn't yank them down mid-scrollback
-        if (scrollOffset.current < 150) {
-          shouldScrollToBottom.current = true;
+        if (ev.type === "message" && ev.conversation_id === id) {
+            const msg = ev.message as Message;
+
+            setMessages((prev) => {
+                if (prev.some((m) => m.id === msg.id))
+                    return prev;
+
+                return [...prev, msg];
+            });
         }
-      }
     });
+
     return unsub;
 }, [id, subscribe]);
 
-  const initialScrollDone = useRef(false);
 
-useEffect(() => {
-
-    if (
-        !loading &&
-        messages.length > 0 &&
-        !initialScrollDone.current
-    ) {
-
-        initialScrollDone.current = true;
-
-        shouldScrollToBottom.current = true;
-
-    }
-
-}, [loading, messages.length]);
 
   useEffect(() => {
 
@@ -253,9 +259,16 @@ useEffect(() => {
     const tmp = text.trim();
     setText("");
     try {
-      const msg = await api.post<Message>(`/chat/${id}/messages`, { content: tmp });
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
-      shouldScrollToBottom.current = true;   // 👈 always jump to bottom for your own message
+          const msg = await api.post<Message>(
+        `/chat/${id}/messages`,
+        { content: tmp }
+    );
+
+    setMessages((prev) =>
+        prev.some((m) => m.id === msg.id)
+            ? prev
+            : [...prev, msg]
+    );
     } catch {
       setText(tmp);
     } finally {
@@ -328,73 +341,120 @@ useEffect(() => {
           </Text>
         </View>
       )}<View style={{ flex: 1 }}>
-        {loading ? (
-          <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
-        ) : (
-          <FlatList
+    {loading ? (
+        <View style={styles.center}>
+            <ActivityIndicator color={colors.brand} />
+        </View>
+    ) : (
+        <FlatList
+            inverted
+            removeClippedSubviews
+            windowSize={10}
+            maxToRenderPerBatch={15}
+            initialNumToRender={15}
             testID="messages-list"
             ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
-            onScroll={(e) => {
-              console.log(
-    "offset:",
-    e.nativeEvent.contentOffset.y
-);
-            scrollOffset.current =
-                e.nativeEvent.contentOffset.y;
+            onEndReached={() => {
+                if (!hasScrolled.current) return;
+                loadOlder();
             }}
-            onContentSizeChange={(_, h) => {
-
-                contentHeight.current = h;
-                console.log(
-    "contentHeight:",
-    h
-);
-
-                if (shouldScrollToBottom.current) {
-
-                    shouldScrollToBottom.current = false;
-
-                    InteractionManager.runAfterInteractions(() => {
-
-                        listRef.current?.scrollToOffset({
-                            offset: 999999,
-                            animated: false,
-                        });
-
-                    });
-
-                }
-
-            }}
-            onMomentumScrollEnd={() => {
-                if (
-                    scrollOffset.current < 150
-                ) {
-                    loadOlder();
-                }
-
+            onEndReachedThreshold={0.2}
+            onScroll={() => {
+                hasScrolled.current = true;
             }}
             contentContainerStyle={{
                 padding: spacing.lg,
                 gap: spacing.sm,
-                paddingBottom: keyboardHeight + 90,
+
+                paddingTop: keyboardHeight + 90,
             }}
-            ListEmptyComponent={<Text style={styles.emptyText}>Say hi anonymously.</Text>}
-            renderItem={({ item }) => {
-              const mine = item.sender_id === user?.id;
-              return (
-                <View style={[styles.bubbleRow, mine ? styles.mineRow : styles.otherRow]}>
-                  <View style={[styles.bubble, mine ? styles.mine : styles.other]}>
-                    <Text style={[styles.bubbleText, mine && { color: "#FFF" }]}>{item.content}</Text>
-                  </View>
-                </View>
-              );
+            ListEmptyComponent={
+                <Text style={styles.emptyText}>
+                    Say hi anonymously.
+                </Text>
+            }
+            ListFooterComponent={
+                loadingOlder ? (
+                    <ActivityIndicator
+                        color={colors.brand}
+                        style={{ marginVertical: spacing.md }}
+                    />
+                ) : null
+            }
+            renderItem={({ item, index }) => {
+
+                const next = messages[index - 1];
+
+                const showDay =
+                    !next ||
+                    new Date(next.created_at).toDateString() !==
+                    new Date(item.created_at).toDateString();
+
+                const mine =
+                    item.sender_id === user?.id;
+
+                return (
+                    <>
+
+                        {showDay && (
+                            <View style={styles.dayDivider}>
+                                <View style={styles.dayLine} />
+
+                                <Text style={styles.dayText}>
+                                    {formatDay(item.created_at)}
+                                </Text>
+
+                                <View style={styles.dayLine} />
+                            </View>
+                        )}
+
+                        <View
+                            style={[
+                                styles.bubbleRow,
+                                mine
+                                    ? styles.mineRow
+                                    : styles.otherRow,
+                            ]}
+                        >
+                            <View
+                                style={[
+                                    styles.bubble,
+                                    mine
+                                        ? styles.mine
+                                        : styles.other,
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.bubbleText,
+                                        mine && {
+                                            color: "#FFF",
+                                        },
+                                    ]}
+                                >
+                                    {item.content}
+                                </Text>
+
+                                <Text
+                                    style={[
+                                        styles.timeText,
+                                        mine &&
+                                            styles.timeMine,
+                                    ]}
+                                >
+                                    {formatTime(item.created_at)}
+                                </Text>
+                            </View>
+                        </View>
+
+                    </>
+                );
             }}
-          />
-        )}
-        </View>
+        />
+    )}
+</View>
 
         <Animated.View
     style={[
@@ -505,4 +565,34 @@ blockBannerText: {
   fontSize: font.sm,
   fontWeight: "600",
 },
+
+timeText: {
+    marginTop: 4,
+    alignSelf: "flex-end",
+    fontSize: 11,
+    color: colors.muted,
+},
+
+timeMine: {
+    color: "rgba(255,255,255,0.75)",
+},
+dayDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: spacing.lg,
+},
+
+dayLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+},
+
+dayText: {
+    marginHorizontal: spacing.md,
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "600",
+},
+
 });

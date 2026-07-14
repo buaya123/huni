@@ -2826,7 +2826,7 @@ async def list_messages(
             {"conversation_id": conversation_id},
             {"_id": 0},
         )
-        .sort("created_at", 1)
+        .sort("created_at", -1)
         .skip(skip)
         .limit(fetch)
         .to_list(fetch)

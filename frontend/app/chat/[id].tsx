@@ -149,6 +149,14 @@ const loadOlder = useCallback(async () => {
             `/chat/${id}/messages?offset=${offset}&limit=${PAGE_SIZE}`
         );
 
+        console.log(
+    "GET",
+    rows.map(r => ({
+        text: r.content,
+        time: r.created_at,
+    }))
+);
+
         if (rows.length === 0) {
 
             setHasOlder(false);
@@ -156,10 +164,13 @@ const loadOlder = useCallback(async () => {
 
         }
 
-        setMessages(prev => [
-            ...prev,
-            ...rows,
-        ]);
+        setMessages(prev => {
+            const existing = new Set(prev.map(m => m.id));
+
+            const older = rows.filter(m => !existing.has(m.id));
+
+            return [...older, ...prev];
+        });
 
         setOffset(prev => prev + rows.length);
 
@@ -187,11 +198,21 @@ useEffect(() => {
 
                 return [...prev, msg];
             });
+            scrollToLatest();
         }
     });
 
     return unsub;
 }, [id, subscribe]);
+
+const scrollToLatest = () => {
+    requestAnimationFrame(() => {
+        listRef.current?.scrollToOffset({
+            offset: 0,
+            animated: true,
+        });
+    });
+};
 
 
 
@@ -216,7 +237,8 @@ useEffect(() => {
             setKeyboardHeight(e.endCoordinates.height);
 
             requestAnimationFrame(() => {
-                listRef.current?.scrollToEnd({
+                listRef.current?.scrollToOffset({
+                    offset: 0,
                     animated: true,
                 });
             });
@@ -263,12 +285,23 @@ useEffect(() => {
         `/chat/${id}/messages`,
         { content: tmp }
     );
+    console.log("POST RESPONSE", msg);
+    setMessages(prev => {
+    const next = prev.some(m => m.id === msg.id)
+        ? prev
+        : [...prev, msg];
 
-    setMessages((prev) =>
-        prev.some((m) => m.id === msg.id)
-            ? prev
-            : [...prev, msg]
+    console.log(
+        next.map(m => ({
+            text: m.content,
+            time: m.created_at,
+        }))
     );
+
+    return next;
+});
+
+    scrollToLatest();
     } catch {
       setText(tmp);
     } finally {
@@ -347,7 +380,6 @@ useEffect(() => {
         </View>
     ) : (
         <FlatList
-            inverted
             removeClippedSubviews
             windowSize={10}
             maxToRenderPerBatch={15}
@@ -366,9 +398,7 @@ useEffect(() => {
             }}
             contentContainerStyle={{
                 padding: spacing.lg,
-                gap: spacing.sm,
-
-                paddingTop: keyboardHeight + 90,
+                paddingBottom: keyboardHeight + 90,
             }}
             ListEmptyComponent={
                 <Text style={styles.emptyText}>
@@ -385,7 +415,7 @@ useEffect(() => {
             }
             renderItem={({ item, index }) => {
 
-                const next = messages[index - 1];
+                const next = messages[index + 1];
 
                 const showDay =
                     !next ||
@@ -505,7 +535,10 @@ const styles = StyleSheet.create({
   action: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md },
   actionText: { fontSize: font.base, color: colors.onSurface, fontWeight: "600" },
   emptyText: { textAlign: "center", color: colors.muted, marginTop: spacing.xxl },
-  bubbleRow: { flexDirection: "row" },
+  bubbleRow: {
+    flexDirection: "row",
+    marginBottom: spacing.sm,
+},
   mineRow: { justifyContent: "flex-end" },
   otherRow: { justifyContent: "flex-start" },
   bubble: {

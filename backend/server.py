@@ -2823,14 +2823,6 @@ async def list_messages(
     if not conv or user["id"] not in conv["participants"]:
         raise HTTPException(status_code=403, detail="Not a participant")
 
-    total = await db.messages.count_documents(
-        {"conversation_id": conversation_id}
-    )
-
-    skip = max(total - offset - limit, 0)
-
-    fetch = min(limit, total - skip)
-
     rows = await (
         db.messages
         .find(
@@ -2838,12 +2830,13 @@ async def list_messages(
             {"_id": 0},
         )
         .sort("created_at", -1)
-        .skip(skip)
-        .limit(fetch)
-        .to_list(fetch)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
     )
 
-    # Mark loaded messages as read
+    rows.reverse()
+
     await db.messages.update_many(
         {
             "conversation_id": conversation_id,
@@ -2854,12 +2847,6 @@ async def list_messages(
             "$addToSet": {"read_by": user["id"]},
         },
     )
-
-    print("Returned messages:", len(rows))
-
-    if rows:
-        print("FIRST:", rows[0]["created_at"])
-        print("LAST :", rows[-1]["created_at"])
 
     return rows
 

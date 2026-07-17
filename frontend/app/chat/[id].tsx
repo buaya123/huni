@@ -149,14 +149,6 @@ const loadOlder = useCallback(async () => {
             `/chat/${id}/messages?offset=${offset}&limit=${PAGE_SIZE}`
         );
 
-        console.log(
-    "GET",
-    rows.map(r => ({
-        text: r.content,
-        time: r.created_at,
-    }))
-);
-
         if (rows.length === 0) {
 
             setHasOlder(false);
@@ -278,18 +270,13 @@ const scrollToLatest = () => {
         `/chat/${id}/messages`,
         { content: tmp }
     );
-    console.log("POST RESPONSE", msg);
+
     setMessages(prev => {
     const next = prev.some(m => m.id === msg.id)
         ? prev
         : [...prev, msg];
 
-    console.log(
-        next.map(m => ({
-            text: m.content,
-            time: m.created_at,
-        }))
-    );
+
 
     return next;
 });
@@ -408,12 +395,14 @@ const scrollToLatest = () => {
             }
             renderItem={({ item, index }) => {
 
-                const next = messages[index + 1];
+                const previous = messages[index - 1];
 
-                const showDay =
-                    !next ||
-                    new Date(next.created_at).toDateString() !==
-                    new Date(item.created_at).toDateString();
+                const currentDay = new Date(item.created_at).toDateString();
+                const previousDay = previous
+                    ? new Date(previous.created_at).toDateString()
+                    : null;
+
+                const showDay = previousDay !== currentDay;
 
                 const mine =
                     item.sender_id === user?.id;

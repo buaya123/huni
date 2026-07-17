@@ -910,7 +910,12 @@ async def _inject_ads(items: List[Dict[str, Any]],offset: int = 0,) -> List[Dict
             ad = choose_weighted_ad()
 
             if ad:
-                out.append(_hydrate_ad(ad))
+                out.append(
+                    _hydrate_ad(
+                        ad,
+                        f"{ad['id']}-{global_index}"
+                    )
+                )
 
     return out
 
@@ -1118,10 +1123,16 @@ async def get_image(image_id: str) -> Response:
 
 
 # ---------- routes: ads ----------
-def _hydrate_ad(a: Dict[str, Any]) -> Dict[str, Any]:
+def _hydrate_ad(a: Dict[str, Any], feed_key: str | None = None) -> Dict[str, Any]:
     return {
         "type": "ad",
-        "id": a["id"],
+
+        # unique key for React
+        "id": feed_key or a["id"],
+
+        # real ad id
+        "ad_id": a["id"],
+
         "advertiser_id": a["advertiser_id"],
         "business_name": a["business_name"],
         "title": a["title"],

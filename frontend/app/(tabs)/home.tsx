@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
+
 import {
   ActivityIndicator,
   FlatList,
@@ -16,6 +22,7 @@ import { PostCard, type Post } from "@/src/components/PostCard";
 import { AdCard, type Ad } from "@/src/components/AdCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { FeedSkeleton } from "@/src/components/FeedSkeleton";
 
 const PAGE_SIZE = 5;
 
@@ -28,41 +35,135 @@ const TABS: { key: "latest" | "trending" | "nearby" | "pulse"; label: string }[]
   { key: "pulse", label: "Pulse" },
 ];
 
+
+
 export default function Home() {
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("latest");
-  const [posts, setPosts] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [offset, setOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const listRef = useRef<FlatList<FeedItem>>(null);
+  const firstVisiblePostId = useRef<string | null>(null);
+  const firstVisiblePost = useRef<
+      Record<(typeof TABS)[number]["key"], string | null>
+  >({
+      latest: null,
+      trending: null,
+      nearby: null,
+      pulse: null,
+  });
+  const viewabilityConfig = useRef({
+      itemVisiblePercentThreshold: 50,
+  });
 
- const load = useCallback(async () => {
+//   const onViewableItemsChanged = useRef(
+//     ({ viewableItems }: any) => {
+
+//         const firstPost = viewableItems.find(
+//             (v: any) =>
+//                 v.item.type !== "ad"
+//         );
+
+//         if (firstPost) {
+
+//             firstVisiblePostId.current = firstPost.item.id;
+//                 console.log(
+//                     "FIRST VISIBLE:",
+//                     firstVisiblePostId.current
+//                 );
+
+//         }
+
+//     }
+// );
+const onViewableItemsChanged = useRef(
+    ({ viewableItems }: any) => {
+
+        const firstPost = viewableItems.find(
+            (v: any) =>
+                v.item.type !== "ad"
+        );
+
+        if (firstPost) {
+
+            firstVisiblePost.current[tab] =
+                firstPost.item.id;
+
+        }
+
+    }
+);
+
+
+  
+
+type FeedCache = {
+    posts: FeedItem[];
+    offset: number;
+    hasMore: boolean;
+    lastFetched: number;
+};
+
+const emptyFeed: FeedCache = {
+    posts: [],
+    offset: 0,
+    hasMore: true,
+    lastFetched: 0
+};
+
+const [feeds, setFeeds] = useState<
+    Record<
+        (typeof TABS)[number]["key"],
+        FeedCache
+    >
+>({
+    latest: { ...emptyFeed },
+    trending: { ...emptyFeed },
+    nearby: { ...emptyFeed },
+    pulse: { ...emptyFeed },
+});
+
+const currentFeed = feeds[tab];
+
+const load = useCallback(async () => {
+
+
 
     try {
 
         const rows = await api.get<FeedItem[]>(
             `/posts?tab=${tab}&offset=0&limit=${PAGE_SIZE}`
         );
+        const postCount = rows.filter(
+            r => r.type !== "ad"
+        ).length;
 
-        setPosts(rows);
-
-        setOffset(PAGE_SIZE);
-
-        setHasMore(rows.length >= PAGE_SIZE);
+        setFeeds(prev => ({
+            ...prev,
+            [tab]: {
+                posts: rows,
+                offset: postCount,
+                hasMore: postCount >= PAGE_SIZE,
+                lastFetched: Date.now(),
+            },
+        }));
 
     } catch {
 
-        setPosts([]);
-
-        setHasMore(false);
+        setFeeds(prev => ({
+            ...prev,
+            [tab]: {
+                posts: [],
+                offset: 0,
+                hasMore: false,
+                lastFetched: Date.now(),
+            },
+        }));
 
     } finally {
 
         setLoading(false);
-
-        setRefreshing(false);
 
     }
 
@@ -70,30 +171,64 @@ export default function Home() {
 
 const loadMore = useCallback(async () => {
 
-    if (loadingMore || loading || !hasMore)
+   if (
+        loadingMore ||
+        loading ||
+        refreshing ||
+        !currentFeed.hasMore
+    ) {
         return;
+    }
 
     try {
 
         setLoadingMore(true);
 
         const rows = await api.get<FeedItem[]>(
-            `/posts?tab=${tab}&offset=${offset}&limit=${PAGE_SIZE}`
+            `/posts?tab=${tab}&offset=${currentFeed.offset}&limit=${PAGE_SIZE}`
         );
 
         if (rows.length === 0) {
 
-            setHasMore(false);
+            setFeeds(prev => ({
+                ...prev,
+                [tab]: {
+                    ...prev[tab],
+                    hasMore: false,
+                },
+            }));
+
             return;
 
         }
 
-        setPosts((prev) => [...prev, ...rows]);
+        const postCount = rows.filter(
+            r => r.type !== "ad"
+        ).length;
 
-        setOffset((prev) => prev + PAGE_SIZE);
+        const merged = [
+            ...currentFeed.posts,
+            ...rows,
+        ];
 
-        if (rows.length < PAGE_SIZE)
-            setHasMore(false);
+        const unique = Array.from(
+            new Map(
+                merged.map(item => [item.id, item])
+            ).values()
+        );
+
+        setFeeds(prev => ({
+            ...prev,
+            [tab]: {
+                ...prev[tab],
+                posts: unique,
+                offset:
+                    prev[tab].offset +
+                    postCount,
+                hasMore:
+                    postCount >= PAGE_SIZE,
+            },
+        }));
 
     } finally {
 
@@ -101,35 +236,58 @@ const loadMore = useCallback(async () => {
 
     }
 
-}, [tab, offset, loadingMore, loading, hasMore]);
+}, [
+    tab,
+    loading,
+    loadingMore,
+    currentFeed,
+]);
 
 useEffect(() => {
 
-    setPosts([]);
+    if (currentFeed.posts.length === 0) {
+        setLoading(true);
+        load();
+    } else {
+        setLoading(false);
+    }
 
-    setOffset(0);
+}, [tab]);
 
-    setHasMore(true);
 
-    setLoading(true);
 
-    load();
 
-}, [load]);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
+const onRefresh = useCallback(async () => {
 
-  const onRefresh = () => {
+    if (refreshing || loading) {
+        return;
+    }
+
     setRefreshing(true);
-    load();
-  };
+
+    try {
+
+        await load();
+
+    } finally {
+
+        setRefreshing(false);
+
+    }
+
+}, [refreshing, loading, load]);
+
+const ids = currentFeed.posts.map(p => p.id);
+
+const duplicateIds = ids.filter(
+    (id, index) => ids.indexOf(id) !== index
+);
 
   return (
+    
     <SafeAreaView style={styles.wrap} edges={["top"]}>
+      
       <View style={styles.header}>
         <Text style={styles.brand}>Huni</Text>
         <Text style={styles.tagline}>Honest. Local. Things</Text>
@@ -158,16 +316,41 @@ useEffect(() => {
       </View>
 
       {loading ? (
-        <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
+
+          <View
+              style={{
+                  padding: spacing.lg,
+              }}
+          >
+              <FeedSkeleton />
+              <FeedSkeleton />
+              <FeedSkeleton />
+          </View>
+
       ) : (
+        
         <FlatList
-          onEndReached={loadMore}
+          ref={listRef}
+          
+          onEndReached={() => {
+              if (!refreshing) {
+                  loadMore();
+              }
+          }}
           onEndReachedThreshold={0.6}
+          scrollEventThrottle={16}
           testID="feed-list"
-          data={posts}
-          keyExtractor={(item, index) => `${item.id}-${index}`}
+          data={currentFeed.posts}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
+          refreshControl={
+              <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor={colors.brand}
+                  progressViewOffset={56}
+              />
+          }
           ListFooterComponent={
               loadingMore ? (
                   <View style={{ paddingVertical: 24 }}>
@@ -181,9 +364,17 @@ useEffect(() => {
               subtitle="Be the first to share something in this tab."
             />
           }
+
+          viewabilityConfig={
+              viewabilityConfig.current
+          }
+
+          onViewableItemsChanged={
+              onViewableItemsChanged.current
+          }
+          
           renderItem={({ item }) => {
 
-    console.log("HOME ITEM", item);
 
     
 
@@ -195,8 +386,6 @@ useEffect(() => {
 
     if (!(item as any).id) {
 
-        console.log("INVALID ITEM", item);
-
         return null;
 
     }
@@ -206,13 +395,18 @@ useEffect(() => {
         <PostCard
             post={item as Post}
             onChange={(updated) =>
-                setPosts((prev) =>
-                    prev.map((p) =>
-                        p.id === updated.id && p.type !== "ad"
-                            ? updated
-                            : p
-                    )
-                )
+                setFeeds(prev => ({
+    ...prev,
+    [tab]: {
+        ...prev[tab],
+        posts: prev[tab].posts.map(p =>
+            p.id === updated.id &&
+            p.type !== "ad"
+                ? updated
+                : p
+        ),
+    },
+}))
             }
         />
 
@@ -222,6 +416,7 @@ useEffect(() => {
         />
       )}
     </SafeAreaView>
+    
   );
 }
 

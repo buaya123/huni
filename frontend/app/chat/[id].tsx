@@ -207,8 +207,7 @@ useEffect(() => {
 
 const scrollToLatest = () => {
     requestAnimationFrame(() => {
-        listRef.current?.scrollToOffset({
-            offset: 0,
+        listRef.current?.scrollToEnd({
             animated: true,
         });
     });
@@ -219,32 +218,26 @@ const scrollToLatest = () => {
   useEffect(() => {
 
     const show = Keyboard.addListener(
-        Platform.OS === "ios"
-            ? "keyboardWillShow"
-            : "keyboardDidShow",
-        (e: KeyboardEvent) => {
+    Platform.OS === "ios"
+        ? "keyboardWillShow"
+        : "keyboardDidShow",
+    (e: KeyboardEvent) => {
 
-            Animated.spring(
-                keyboardOffset,
-                {
-                    toValue: e.endCoordinates.height,
-                    damping: 18,
-                    stiffness: 200,
-                    mass: 0.9,
-                    useNativeDriver: false,
-                }
-            ).start();
-            setKeyboardHeight(e.endCoordinates.height);
+        Animated.spring(
+            keyboardOffset,
+            {
+                toValue: e.endCoordinates.height,
+                damping: 18,
+                stiffness: 200,
+                mass: 0.9,
+                useNativeDriver: false,
+            }
+        ).start();
 
-            requestAnimationFrame(() => {
-                listRef.current?.scrollToOffset({
-                    offset: 0,
-                    animated: true,
-                });
-            });
+        setKeyboardHeight(e.endCoordinates.height);
 
-        }
-    );
+    }
+);
 
     const hide = Keyboard.addListener(
         Platform.OS === "ios"

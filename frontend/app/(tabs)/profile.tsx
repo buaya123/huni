@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/auth";
@@ -15,9 +15,10 @@ type CommentedPost = Post & { my_comment_preview?: string; my_comment_at?: strin
 export default function Profile() {
   const router = useRouter();
   const { user, refresh, regenerateAlias, updateBio } = useAuth();
-  const [tab, setTab] = useState<"posts" | "comments">("posts");
+  const [tab, setTab] = useState<"posts" | "comments" | "listen">("posts");
   const [posts, setPosts] = useState<Post[]>([]);
   const [commented, setCommented] = useState<CommentedPost[]>([]);
+  const [listened, setListened] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [editingBio, setEditingBio] = useState(false);
@@ -28,23 +29,25 @@ export default function Profile() {
   const load = useCallback(async () => {
     if (!user) return;
     try {
-      const [ps, cps] = await Promise.all([
+      const [ps, cps, bms] = await Promise.all([
         api.get<Post[]>(`/users/${user.id}/posts`),
         api.get<CommentedPost[]>(`/users/${user.id}/commented-posts`),
+        api.get<Post[]>("/me/bookmarks").catch(() => [] as Post[]),
       ]);
       setPosts(ps);
       setCommented(cps);
+      // Backend returns newest-bookmarked first; user wants earliest at top → reverse.
+      setListened([...bms].reverse());
       try {
           const partners = await api.get<any[]>("/scanner/partners");
-          console.log("SCANNER PARTNERS:", partners);
           setScannerPartners(partners);
-      } catch (e) {
-          console.log("SCANNER ERROR:", e);
+      } catch {
           setScannerPartners([]);
       }
     } catch {
       setPosts([]);
       setCommented([]);
+      setListened([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -55,6 +58,9 @@ export default function Profile() {
     setLoading(true);
     load();
   }, [load]);
+
+  // Re-fetch when the tab regains focus so newly-listened posts show up.
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   useEffect(() => { if (user) setBio(user.bio ?? ""); }, [user]);
 
@@ -212,6 +218,13 @@ export default function Profile() {
           >
             <Text style={[styles.tabText, tab === "comments" && styles.tabTextActive]}>Comments ({commented.length})</Text>
           </Pressable>
+          <Pressable
+            onPress={() => setTab("listen")}
+            style={[styles.tab, tab === "listen" && styles.tabActive]}
+            testID="profile-tab-listen"
+          >
+            <Text style={[styles.tabText, tab === "listen" && styles.tabTextActive]}>Listen ({listened.length})</Text>
+          </Pressable>
         </View>
 
         {loading ? (
@@ -223,6 +236,30 @@ export default function Profile() {
             <View style={{ paddingHorizontal: spacing.lg }}>
               {posts.map((p) => (
                 <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} />
+              ))}
+            </View>
+          )
+        ) : tab === "listen" ? (
+          listened.length === 0 ? (
+            <EmptyState
+              title="Nothing on Listen yet"
+              subtitle="Tap the bookmark icon on any post to add it to Listen. You'll be notified when there's a new comment."
+            />
+          ) : (
+            <View style={{ paddingHorizontal: spacing.lg }}>
+              {listened.map((p) => (
+                <PostCard
+                  key={p.id}
+                  post={p}
+                  onChange={(u) => {
+                    if (!u.is_bookmarked) {
+                      // Un-listen: drop the post from this list immediately.
+                      setListened((prev) => prev.filter((x) => x.id !== u.id));
+                    } else {
+                      setListened((prev) => prev.map((x) => (x.id === u.id ? u : x)));
+                    }
+                  }}
+                />
               ))}
             </View>
           )

@@ -2611,7 +2611,7 @@ async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] 
                 "actor_alias": user["alias"],
                 "post_id": post_id,
                 "is_ad": False,
-                "content_preview": f"💬 New comment on a post you saved: {inp.content[:80] or '📷 Photo'}",
+                "content_preview": f"💬 New comment on a post you're listening to: {inp.content[:80] or '📷 Photo'}",
                 "created_at": now().isoformat(),
                 "read": False,
             })

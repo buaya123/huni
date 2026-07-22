@@ -355,6 +355,7 @@ class StoreItemIn(BaseModel):
     price_tokens: int = Field(default=0, ge=0, le=1_000_000)
     stock: int = Field(default=-1, ge=-1, le=1_000_000)  # -1 = unlimited
     image_id: Optional[str] = Field(default=None, max_length=200)
+    hex_color: Optional[str] = Field(default=None, pattern="^#[0-9A-Fa-f]{6}$")  # for background_colors
     enabled: bool = True
     active_from: Optional[str] = Field(default=None, max_length=10)
     active_until: Optional[str] = Field(default=None, max_length=10)
@@ -369,10 +370,16 @@ class StoreItemUpdate(BaseModel):
     price_tokens: Optional[int] = Field(default=None, ge=0, le=1_000_000)
     stock: Optional[int] = Field(default=None, ge=-1, le=1_000_000)
     image_id: Optional[str] = Field(default=None, max_length=200)
+    hex_color: Optional[str] = Field(default=None, pattern="^#[0-9A-Fa-f]{6}$")
     enabled: Optional[bool] = None
     active_from: Optional[str] = Field(default=None, max_length=10)
     active_until: Optional[str] = Field(default=None, max_length=10)
     sort_order: Optional[int] = Field(default=None, ge=0, le=10_000)
+
+
+class EquipIn(BaseModel):
+    slot: str = Field(pattern="^(bg_color|bg_pattern|border|avatar)$")
+    item_id: Optional[str] = Field(default=None, max_length=200)
 
 
 class AdSettingsIn(BaseModel):
@@ -2362,6 +2369,19 @@ STORE_CATEGORIES: Dict[str, List[Dict[str, str]]] = {
 }
 
 
+STYLE_SLOT_MAP: Dict[tuple, str] = {
+    ("appearance", "background_colors"): "bg_color",
+    ("appearance", "patterns"): "bg_pattern",
+    ("appearance", "borders"): "border",
+    ("appearance", "avatar_packs"): "avatar",
+}
+STYLE_SLOTS = ("bg_color", "bg_pattern", "border", "avatar")
+
+
+def _style_slot_for(category: str, subcategory: str) -> Optional[str]:
+    return STYLE_SLOT_MAP.get((category, subcategory))
+
+
 def _hydrate_store_item(x: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": x["id"],
@@ -2372,6 +2392,8 @@ def _hydrate_store_item(x: Dict[str, Any]) -> Dict[str, Any]:
         "price_tokens": int(x.get("price_tokens", 0) or 0),
         "stock": int(x.get("stock", -1) if x.get("stock") is not None else -1),
         "image_id": x.get("image_id"),
+        "hex_color": x.get("hex_color"),
+        "style_slot": _style_slot_for(x["category"], x.get("subcategory", "")),
         "enabled": bool(x.get("enabled", True)),
         "active_from": x.get("active_from"),
         "active_until": x.get("active_until"),
@@ -2430,6 +2452,7 @@ async def admin_create_store_item(inp: StoreItemIn, user: Dict[str, Any] = Depen
         "price_tokens": inp.price_tokens,
         "stock": inp.stock,
         "image_id": inp.image_id,
+        "hex_color": inp.hex_color,
         "enabled": inp.enabled,
         "active_from": (inp.active_from or "").strip() or None,
         "active_until": (inp.active_until or "").strip() or None,
@@ -2454,7 +2477,7 @@ async def admin_get_store_item(item_id: str, user: Dict[str, Any] = Depends(get_
 async def admin_update_store_item(item_id: str, inp: StoreItemUpdate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     require_role(user, "admin")
     updates: Dict[str, Any] = {}
-    for f in ("category", "subcategory", "name", "description", "price_tokens", "stock", "image_id", "enabled", "active_from", "active_until", "sort_order"):
+    for f in ("category", "subcategory", "name", "description", "price_tokens", "stock", "image_id", "hex_color", "enabled", "active_from", "active_until", "sort_order"):
         v = getattr(inp, f)
         if v is None:
             continue
@@ -2483,6 +2506,121 @@ async def admin_delete_store_item(item_id: str, user: Dict[str, Any] = Depends(g
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "ok"}
+
+
+# ---------- routes: store purchase & equip ----------
+@api.post("/store/items/{item_id}/purchase")
+async def purchase_store_item(item_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    item = await db.store_items.find_one({"id": item_id}, {"_id": 0})
+    if not item or not item.get("enabled", True):
+        raise HTTPException(status_code=404, detail="Item not found")
+    # active-date check
+    today = now().date().isoformat()
+    if item.get("active_from") and today < item["active_from"]:
+        raise HTTPException(status_code=400, detail="Item not yet available")
+    if item.get("active_until") and today > item["active_until"]:
+        raise HTTPException(status_code=400, detail="Item no longer available")
+    # already owned?
+    existing = await db.purchases.find_one({"user_id": user["id"], "item_id": item_id})
+    if existing:
+        raise HTTPException(status_code=409, detail="You already own this item")
+    # tokens
+    price = int(item.get("price_tokens", 0) or 0)
+    balance = int(user.get("tokens", 0) or 0)
+    if balance < price:
+        raise HTTPException(status_code=400, detail=f"Not enough tokens (need {price}, have {balance})")
+    # stock
+    stock = int(item.get("stock", -1) if item.get("stock") is not None else -1)
+    if stock == 0:
+        raise HTTPException(status_code=400, detail="Out of stock")
+    # debit + record + decrement (best effort ordering)
+    await db.users.update_one({"id": user["id"]}, {"$inc": {"tokens": -price}})
+    await db.purchases.insert_one({
+        "id": new_id(),
+        "user_id": user["id"],
+        "item_id": item_id,
+        "price_paid": price,
+        "purchased_at": now().isoformat(),
+    })
+    if stock > 0:
+        await db.store_items.update_one({"id": item_id}, {"$inc": {"stock": -1}})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+    return {
+        "status": "ok",
+        "item": _hydrate_store_item(item),
+        "tokens": int((fresh or {}).get("tokens", 0) or 0),
+    }
+
+
+@api.get("/me/purchases")
+async def my_purchases(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    rows = await db.purchases.find({"user_id": user["id"]}, {"_id": 0}).sort("purchased_at", -1).to_list(500)
+    out: List[Dict[str, Any]] = []
+    for p in rows:
+        item = await db.store_items.find_one({"id": p["item_id"]}, {"_id": 0})
+        if not item:
+            continue
+        out.append({
+            "purchase_id": p["id"],
+            "purchased_at": p.get("purchased_at"),
+            "price_paid": int(p.get("price_paid", 0) or 0),
+            "item": _hydrate_store_item(item),
+        })
+    return out
+
+
+@api.post("/me/equip")
+async def equip_style(inp: EquipIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    equipped = dict(user.get("equipped") or {})
+    if inp.item_id is None:
+        equipped[inp.slot] = None
+    else:
+        # verify ownership + slot match
+        owned = await db.purchases.find_one({"user_id": user["id"], "item_id": inp.item_id})
+        if not owned:
+            raise HTTPException(status_code=403, detail="You don't own this item")
+        item = await db.store_items.find_one({"id": inp.item_id}, {"_id": 0})
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+        slot = _style_slot_for(item["category"], item.get("subcategory", ""))
+        if slot != inp.slot:
+            raise HTTPException(status_code=400, detail=f"Item cannot be equipped in slot '{inp.slot}'")
+        equipped[inp.slot] = inp.item_id
+    await db.users.update_one({"id": user["id"]}, {"$set": {"equipped": equipped}})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+    return {"status": "ok", "equipped_styles": await _hydrate_equipped_styles(fresh or user)}
+
+
+async def _hydrate_equipped_styles(u: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {s: None for s in STYLE_SLOTS}
+    eq = (u or {}).get("equipped") or {}
+    for slot in STYLE_SLOTS:
+        iid = eq.get(slot)
+        if not iid:
+            continue
+        item = await db.store_items.find_one({"id": iid}, {"_id": 0})
+        if not item:
+            continue
+        out[slot] = {
+            "item_id": item["id"],
+            "image_id": item.get("image_id"),
+            "hex_color": item.get("hex_color"),
+            "name": item.get("name"),
+        }
+    return out
+
+
+@api.get("/me/equipped_styles")
+async def my_equipped_styles(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    return await _hydrate_equipped_styles(user)
+
+
+@api.get("/users/{user_id}/equipped_styles")
+async def user_equipped_styles(user_id: str, _viewer: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await _hydrate_equipped_styles(target)
 
 
 # ---------- routes: comments ----------
@@ -3149,6 +3287,9 @@ async def on_startup() -> None:
     await db.xp_ledger.create_index([("user_id", 1), ("created_at", -1)])
     await db.bookmarks.create_index([("post_id", 1), ("user_id", 1)], unique=True)
     await db.bookmarks.create_index([("user_id", 1), ("created_at", -1)])
+    await db.purchases.create_index("id", unique=True)
+    await db.purchases.create_index([("user_id", 1), ("item_id", 1)], unique=True)
+    await db.purchases.create_index([("user_id", 1), ("purchased_at", -1)])
 
     # Economy migration: backfill exp / tokens / campaign budget fields
     try:
@@ -3174,6 +3315,43 @@ async def on_startup() -> None:
         )
     except Exception as _mig:  # noqa: BLE001
         print(f"⚠️ economy migration skipped: {_mig}")
+
+    # Seed a few mock appearance store items (idempotent — only if none exist for that subcategory).
+    try:
+        MOCK_STORE_ITEMS = [
+            {"name": "Sunset Orange", "subcategory": "background_colors", "hex_color": "#FF7A45", "description": "Warm sunset orange for your profile banner.", "price_tokens": 40},
+            {"name": "Ocean Teal", "subcategory": "background_colors", "hex_color": "#0AA1A1", "description": "Cool ocean teal — calm and pro.", "price_tokens": 40},
+            {"name": "Midnight Indigo", "subcategory": "background_colors", "hex_color": "#3A1E9E", "description": "Deep indigo for the night owls.", "price_tokens": 60},
+            {"name": "Grid Pattern (mock)", "subcategory": "patterns", "hex_color": None, "description": "MOCK — replace with a 1200×400 pattern PNG.", "price_tokens": 80},
+            {"name": "Confetti Party (mock)", "subcategory": "patterns", "hex_color": None, "description": "MOCK — festive tile pattern placeholder.", "price_tokens": 100},
+            {"name": "Gold Ring Border (mock)", "subcategory": "borders", "hex_color": None, "description": "MOCK — replace with a 512×512 PNG (transparent center).", "price_tokens": 120},
+            {"name": "Fire Ring Border (mock)", "subcategory": "borders", "hex_color": None, "description": "MOCK — flame border, transparent center required.", "price_tokens": 150},
+            {"name": "Cat Avatar Pack (mock)", "subcategory": "avatar_packs", "hex_color": None, "description": "MOCK — 512×512 square avatar image.", "price_tokens": 90},
+            {"name": "Robot Avatar Pack (mock)", "subcategory": "avatar_packs", "hex_color": None, "description": "MOCK — 512×512 avatar. Replace image_id via Admin.", "price_tokens": 90},
+        ]
+        for m in MOCK_STORE_ITEMS:
+            exists = await db.store_items.find_one({"name": m["name"], "category": "appearance", "subcategory": m["subcategory"]}, {"_id": 0, "id": 1})
+            if exists:
+                continue
+            await db.store_items.insert_one({
+                "id": new_id(),
+                "category": "appearance",
+                "subcategory": m["subcategory"],
+                "name": m["name"],
+                "description": m["description"],
+                "price_tokens": m["price_tokens"],
+                "stock": -1,
+                "image_id": None,
+                "hex_color": m["hex_color"],
+                "enabled": True,
+                "active_from": None,
+                "active_until": None,
+                "sort_order": 0,
+                "created_at": now().isoformat(),
+            })
+    except Exception as _seed:  # noqa: BLE001
+        print(f"⚠️ store seed skipped: {_seed}")
+
     # promote configured admin emails
     if ADMIN_EMAILS:
         await db.users.update_many(

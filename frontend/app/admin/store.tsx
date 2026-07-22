@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,8 +17,9 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import { api, imageUrl } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
+import { pickImages, uploadImages } from "@/src/utils/imagePicker";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
 type StoreItem = {
@@ -33,6 +35,7 @@ type StoreItem = {
   active_until?: string | null;
   sort_order: number;
   image_id?: string | null;
+  hex_color?: string | null;
 };
 
 type CategoryDef = { id: string; label: string; icon: string };
@@ -57,6 +60,8 @@ type FormState = {
   active_from: string;
   active_until: string;
   sort_order: string;
+  image_id: string | null;
+  hex_color: string;
 };
 
 const emptyForm = (): FormState => ({
@@ -70,7 +75,49 @@ const emptyForm = (): FormState => ({
   active_from: "",
   active_until: "",
   sort_order: "0",
+  image_id: null,
+  hex_color: "",
 });
+
+// Contextual guidance shown in the admin form based on the selected subcategory.
+const SUB_HELP: Record<string, { title: string; specs: string[]; dos: string[]; donts: string[] }> = {
+  background_colors: {
+    title: "Background Colors",
+    specs: ["No image needed", "Just a hex value (e.g. #FF7A45)"],
+    dos: ["Pick colors with strong contrast against white text", "Prefer saturated hues for visual pop"],
+    donts: ["Don't use near-white / near-black colors", "Don't upload an image — leave the picker empty"],
+  },
+  patterns: {
+    title: "Background Patterns",
+    specs: ["Recommended size: 1200×400 (banner strip) OR a seamless 512×512 tile", "PNG or JPG, under 500 KB"],
+    dos: ["Keep contrast subtle so text stays readable", "For tiled patterns, make edges seamless"],
+    donts: ["Don't include user photos or copyrighted textures", "Don't use very busy patterns"],
+  },
+  borders: {
+    title: "Profile Borders (tricky — read carefully!)",
+    specs: [
+      "REQUIRED: 512×512 PNG with transparency",
+      "Center circle diameter ≈ 380px (≈74% of image width) MUST be fully transparent",
+      "Draw only the decorative ring/frame in the outer area",
+    ],
+    dos: [
+      "Keep the transparent circle perfectly centered",
+      "Test the PNG against a photo background before uploading",
+      "Use anti-aliased edges for a clean ring",
+    ],
+    donts: [
+      "Don't fill the center — the avatar shows through it",
+      "Don't upload JPG (no transparency support)",
+      "Don't extend art outside the 512×512 square — it will be cropped",
+    ],
+  },
+  avatar_packs: {
+    title: "Avatar Packs",
+    specs: ["Recommended size: 512×512 square PNG", "Transparent background optional"],
+    dos: ["Center the subject in the square", "Keep faces / focal points inside the middle 80% of the canvas"],
+    donts: ["Don't upload rectangular images (they'll be cropped to square)", "Don't include text or watermarks"],
+  },
+};
 
 export default function AdminStore() {
   const router = useRouter();
@@ -79,6 +126,7 @@ export default function AdminStore() {
   const [categories, setCategories] = useState<Record<string, CategoryDef[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [editing, setEditing] = useState<FormState | null>(null);
 
   const isAdmin = user?.role === "admin";
@@ -96,10 +144,37 @@ export default function AdminStore() {
 
   useEffect(() => { if (isAdmin) load(); else setLoading(false); }, [isAdmin, load]);
 
+  const pickAndUploadImage = async () => {
+    try {
+      setUploading(true);
+      const picked = await pickImages(1);
+      if (picked.length === 0) return;
+      const [id] = await uploadImages(picked);
+      setEditing((s) => s && { ...s, image_id: id });
+    } catch (e) {
+      Alert.alert("Upload failed", e instanceof Error ? e.message : "Could not upload image");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const submit = async () => {
     if (!editing) return;
     if (!editing.name.trim()) { Alert.alert("Missing name", "Give the item a name."); return; }
     if (Number(editing.price_tokens) < 0) { Alert.alert("Invalid price", "Price must be 0 or more."); return; }
+    // Slot-specific validation
+    if (editing.category === "appearance" && editing.subcategory === "background_colors") {
+      if (!/^#[0-9A-Fa-f]{6}$/.test(editing.hex_color.trim())) {
+        Alert.alert("Missing hex color", "Background Color items need a hex like #FF7A45.");
+        return;
+      }
+    }
+    if (editing.category === "appearance" && (editing.subcategory === "patterns" || editing.subcategory === "borders" || editing.subcategory === "avatar_packs")) {
+      if (!editing.image_id) {
+        Alert.alert("Missing image", "This item type requires an image. Please upload one.");
+        return;
+      }
+    }
     setSaving(true);
     try {
       const payload = {
@@ -113,6 +188,8 @@ export default function AdminStore() {
         active_from: editing.active_from.trim() || null,
         active_until: editing.active_until.trim() || null,
         sort_order: Number(editing.sort_order) || 0,
+        image_id: editing.image_id,
+        hex_color: editing.hex_color.trim() ? editing.hex_color.trim() : null,
       };
       if (editing.id) {
         await api.patch(`/admin/store/items/${editing.id}`, payload);
@@ -212,6 +289,8 @@ export default function AdminStore() {
                     active_from: item.active_from || "",
                     active_until: item.active_until || "",
                     sort_order: String(item.sort_order ?? 0),
+                    image_id: item.image_id ?? null,
+                    hex_color: item.hex_color ?? "",
                   })}
                   testID={`store-item-${item.id}`}
                 >
@@ -284,6 +363,81 @@ export default function AdminStore() {
                   ))}
                 </View>
               </Field>
+
+              {/* Contextual guidance for the selected subcategory */}
+              {editing && SUB_HELP[editing.subcategory] && (
+                <View style={styles.helpBox}>
+                  <Text style={styles.helpTitle}>{SUB_HELP[editing.subcategory].title}</Text>
+                  {SUB_HELP[editing.subcategory].specs.map((s, i) => (
+                    <Text key={`s${i}`} style={styles.helpSpec}>• {s}</Text>
+                  ))}
+                  <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: 4 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.helpHead}>Do</Text>
+                      {SUB_HELP[editing.subcategory].dos.map((d, i) => (
+                        <Text key={`d${i}`} style={styles.helpItem}>✓ {d}</Text>
+                      ))}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.helpHead, { color: colors.error }]}>Don&apos;t</Text>
+                      {SUB_HELP[editing.subcategory].donts.map((d, i) => (
+                        <Text key={`x${i}`} style={styles.helpItem}>✗ {d}</Text>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Hex color — only for background_colors */}
+              {editing?.category === "appearance" && editing?.subcategory === "background_colors" && (
+                <Field label="Hex color (e.g. #FF7A45)">
+                  <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+                    <TextInput
+                      style={[styles.input, { flex: 1 }]}
+                      value={editing?.hex_color || ""}
+                      onChangeText={(v) => setEditing((s) => s && { ...s, hex_color: v })}
+                      placeholder="#FF7A45"
+                      placeholderTextColor={colors.muted}
+                      autoCapitalize="characters"
+                      maxLength={7}
+                      testID="hex-input"
+                    />
+                    {/^#[0-9A-Fa-f]{6}$/.test(editing?.hex_color || "") && (
+                      <View style={{ width: 40, height: 40, borderRadius: radius.sm, backgroundColor: editing.hex_color, borderWidth: 1, borderColor: colors.border }} />
+                    )}
+                  </View>
+                </Field>
+              )}
+
+              {/* Preview image — shown for everything except pure background_colors */}
+              {!(editing?.category === "appearance" && editing?.subcategory === "background_colors") && (
+                <Field label={editing?.subcategory === "borders" ? "Border PNG (transparent center)" : "Preview image"}>
+                  <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
+                    {editing?.image_id ? (
+                      <Image source={{ uri: imageUrl(editing.image_id) }} style={styles.previewImg} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.previewImg, { alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary }]}>
+                        <Ionicons name="image-outline" size={24} color={colors.muted} />
+                      </View>
+                    )}
+                    <View style={{ flex: 1, gap: 6 }}>
+                      <Pressable style={styles.uploadBtn} onPress={pickAndUploadImage} disabled={uploading} testID="upload-image-btn">
+                        {uploading ? <ActivityIndicator color="#FFFFFF" /> : (
+                          <>
+                            <Ionicons name="cloud-upload-outline" size={16} color="#FFFFFF" />
+                            <Text style={styles.uploadBtnText}>{editing?.image_id ? "Replace image" : "Upload image"}</Text>
+                          </>
+                        )}
+                      </Pressable>
+                      {editing?.image_id && (
+                        <Pressable onPress={() => setEditing((s) => s && { ...s, image_id: null })}>
+                          <Text style={styles.removeText}>Remove image</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                </Field>
+              )}
               <View style={{ flexDirection: "row", gap: spacing.md }}>
                 <View style={{ flex: 1 }}>
                   <Field label="Price (tokens)">
@@ -366,4 +520,16 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   submit: { backgroundColor: colors.brand, borderRadius: radius.pill, paddingVertical: 14, alignItems: "center" },
   submitText: { color: "#FFFFFF", fontWeight: "800" },
+  helpBox: {
+    padding: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.brand, gap: 4,
+  },
+  helpTitle: { fontWeight: "900", color: colors.onBrandTertiary, fontSize: font.sm },
+  helpSpec: { color: colors.onBrandTertiary, fontSize: font.sm },
+  helpHead: { fontWeight: "800", color: colors.brand, fontSize: 11, textTransform: "uppercase", marginBottom: 2 },
+  helpItem: { color: colors.onSurface, fontSize: 12, marginTop: 2 },
+  previewImg: { width: 80, height: 80, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
+  uploadBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.brand, paddingVertical: 10, borderRadius: radius.pill },
+  uploadBtnText: { color: "#FFFFFF", fontWeight: "800" },
+  removeText: { color: colors.error, fontWeight: "700", fontSize: font.sm, textAlign: "center" },
 });

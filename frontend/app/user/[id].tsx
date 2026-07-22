@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import { api, imageUrl } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { Avatar } from "@/src/components/Avatar";
 import { PostCard, type Post } from "@/src/components/PostCard";
@@ -24,22 +24,27 @@ type Profile = {
   rank_title?: string;
 };
 
+type EquippedStyles = Record<string, { item_id: string; image_id: string | null; hex_color: string | null; name: string } | null>;
+
 export default function UserProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
+  const [equipped, setEquipped] = useState<EquippedStyles>({});
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
-      const [u, ps] = await Promise.all([
+      const [u, ps, equ] = await Promise.all([
         api.get<Profile>(`/users/${id}`),
         api.get<Post[]>(`/users/${id}/posts`),
+        api.get<EquippedStyles>(`/users/${id}/equipped_styles`).catch(() => ({} as EquippedStyles)),
       ]);
       setProfile(u);
       setPosts(ps);
+      setEquipped(equ);
     } catch {
       // ignore
     } finally {
@@ -77,6 +82,10 @@ export default function UserProfile() {
 
   const isMe = profile.id === user?.id;
   const joined = profile.joined_at ? new Date(profile.joined_at).toLocaleDateString() : "";
+  const bgColor = equipped?.bg_color?.hex_color;
+  const bgPatternId = equipped?.bg_pattern?.image_id;
+  const borderId = equipped?.border?.image_id;
+  const avatarId = equipped?.avatar?.image_id;
 
   return (
     <SafeAreaView style={styles.wrap} edges={["top"]}>
@@ -89,8 +98,16 @@ export default function UserProfile() {
           <View style={{ width: 26 }} />
         </View>
 
-        <View style={styles.card}>
-          <Avatar alias={profile.alias} size={72} />
+        {(bgColor || bgPatternId) && (
+          <View style={[styles.banner, { backgroundColor: bgColor || colors.brand }]}>
+            {bgPatternId && (
+              <Image source={{ uri: imageUrl(bgPatternId) }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            )}
+          </View>
+        )}
+
+        <View style={[styles.card, (bgColor || bgPatternId) && { marginTop: -50 }]}>
+          <Avatar alias={profile.alias} size={72} avatarImageId={avatarId} borderImageId={borderId} />
           <Text style={styles.alias}>{profile.alias}</Text>
           <Text style={styles.joined}>Joined {joined}</Text>
           <View style={styles.rankRow}>
@@ -138,6 +155,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md },
   title: { fontSize: font.lg, fontWeight: "700", color: colors.onSurface },
+  banner: { height: 100, backgroundColor: colors.brand, position: "relative", overflow: "hidden" },
   card: { marginHorizontal: spacing.lg, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm },
   alias: { fontSize: 20, fontWeight: "800", color: colors.onSurface, marginTop: spacing.sm },
   joined: { fontSize: font.sm, color: colors.muted },

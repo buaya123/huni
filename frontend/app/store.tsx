@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useRouter } from "expo-router";
+import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api, imageUrl } from "@/src/api/client";
+import { useAuth } from "@/src/context/auth";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
 type StoreItem = {
@@ -15,8 +16,13 @@ type StoreItem = {
   price_tokens: number;
   stock: number;
   image_id?: string | null;
+  hex_color?: string | null;
+  style_slot?: "bg_color" | "bg_pattern" | "border" | "avatar" | null;
   enabled: boolean;
 };
+
+type Purchase = { purchase_id: string; purchased_at: string; price_paid: number; item: StoreItem };
+type EquippedStyles = Record<string, { item_id: string; image_id: string | null; hex_color: string | null; name: string } | null>;
 
 type CategoryDef = { id: string; label: string; icon: string };
 type CategoriesResp = { categories: Record<string, CategoryDef[]> };
@@ -30,31 +36,82 @@ const CATEGORY_LABELS: Record<string, { label: string; icon: string }> = {
 
 export default function StoreScreen() {
   const router = useRouter();
+  const { refresh } = useAuth();
   const [categories, setCategories] = useState<Record<string, CategoryDef[]>>({});
   const [items, setItems] = useState<StoreItem[]>([]);
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [equipped, setEquipped] = useState<EquippedStyles>({});
   const [activeCat, setActiveCat] = useState<string>("appearance");
   const [tokens, setTokens] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [cats, its, econ] = await Promise.all([
+      const [cats, its, econ, purch, equ] = await Promise.all([
         api.get<CategoriesResp>("/store/categories"),
         api.get<StoreItem[]>("/store/items"),
         api.get<{ tokens: number }>("/me/economy").catch(() => ({ tokens: 0 })),
+        api.get<Purchase[]>("/me/purchases").catch(() => [] as Purchase[]),
+        api.get<EquippedStyles>("/me/equipped_styles").catch(() => ({} as EquippedStyles)),
       ]);
       setCategories(cats.categories);
       setItems(its);
       setTokens(econ.tokens);
+      setPurchases(purch);
+      setEquipped(equ);
     } catch { /* ignore */ } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const ownedIds = useMemo(() => new Set(purchases.map((p) => p.item.id)), [purchases]);
+  const equippedIds = useMemo(() => new Set(Object.values(equipped).filter(Boolean).map((v) => v!.item_id)), [equipped]);
 
   const filtered = useMemo(() => items.filter((i) => i.category === activeCat), [items, activeCat]);
   const catList: [string, CategoryDef[]][] = useMemo(() => Object.entries(categories), [categories]);
   const subs = categories[activeCat] || [];
+
+  const doBuy = async (item: StoreItem) => {
+    Alert.alert(
+      "Buy this item?",
+      `${item.name} — ${item.price_tokens} tokens\n\nYou have ${tokens.toLocaleString()} tokens.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Buy",
+          onPress: async () => {
+            setBusyId(item.id);
+            try {
+              const r = await api.post<{ tokens: number }>(`/store/items/${item.id}/purchase`);
+              setTokens(r.tokens);
+              await load();
+              refresh();
+            } catch (e) {
+              Alert.alert("Purchase failed", e instanceof Error ? e.message : "Try again");
+            } finally { setBusyId(null); }
+          },
+        },
+      ]
+    );
+  };
+
+  const doEquip = async (item: StoreItem, unequip: boolean) => {
+    if (!item.style_slot) return;
+    setBusyId(item.id);
+    try {
+      await api.post<EquippedStyles>("/me/equip", {
+        slot: item.style_slot,
+        item_id: unequip ? null : item.id,
+      });
+      await load();
+      refresh();
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not equip");
+    } finally { setBusyId(null); }
+  };
 
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
@@ -97,7 +154,6 @@ export default function StoreScreen() {
         contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />}
       >
-        {/* Subcategory chips */}
         {subs.length > 0 && (
           <View style={styles.subRow}>
             {subs.map((s) => (
@@ -119,31 +175,78 @@ export default function StoreScreen() {
           </View>
         ) : (
           <View style={styles.grid}>
-            {filtered.map((item) => (
-              <View key={item.id} style={styles.itemCard} testID={`item-${item.id}`}>
-                {item.image_id ? (
-                  <Image source={{ uri: imageUrl(item.image_id) }} style={styles.itemImage} resizeMode="cover" />
-                ) : (
-                  <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                    <Ionicons name="cube-outline" size={32} color={colors.muted} />
+            {filtered.map((item) => {
+              const owned = ownedIds.has(item.id);
+              const isEquipped = equippedIds.has(item.id);
+              const isBusy = busyId === item.id;
+              return (
+                <View key={item.id} style={styles.itemCard} testID={`item-${item.id}`}>
+                  <View style={styles.itemImageBox}>
+                    {item.hex_color ? (
+                      <View style={[styles.itemImage, { backgroundColor: item.hex_color }]} />
+                    ) : item.image_id ? (
+                      <Image source={{ uri: imageUrl(item.image_id) }} style={styles.itemImage} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                        <Ionicons name="cube-outline" size={32} color={colors.muted} />
+                      </View>
+                    )}
+                    {isEquipped && (
+                      <View style={styles.equippedBadge}>
+                        <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
+                        <Text style={styles.equippedText}>Equipped</Text>
+                      </View>
+                    )}
+                    {owned && !isEquipped && (
+                      <View style={styles.ownedBadge}>
+                        <Ionicons name="bag-check-outline" size={12} color={colors.onBrandTertiary} />
+                        <Text style={styles.ownedText}>Owned</Text>
+                      </View>
+                    )}
                   </View>
-                )}
-                <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                <Text style={styles.itemDesc} numberOfLines={2}>{item.description}</Text>
-                <View style={styles.itemFooter}>
-                  <View style={styles.itemPrice}>
-                    <Ionicons name="cash-outline" size={12} color={colors.onBrandTertiary} />
-                    <Text style={styles.itemPriceText}>{item.price_tokens}</Text>
+                  <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.itemDesc} numberOfLines={2}>{item.description}</Text>
+                  <View style={styles.itemFooter}>
+                    <View style={styles.itemPrice}>
+                      <Ionicons name="cash-outline" size={12} color={colors.onBrandTertiary} />
+                      <Text style={styles.itemPriceText}>{item.price_tokens}</Text>
+                    </View>
+                    <Text style={styles.itemStock}>{item.stock < 0 ? "∞" : `${item.stock} left`}</Text>
                   </View>
-                  <Text style={styles.itemStock}>
-                    {item.stock < 0 ? "∞" : `${item.stock} left`}
-                  </Text>
+
+                  {isBusy ? (
+                    <View style={styles.actionBtn}><ActivityIndicator color={colors.brand} /></View>
+                  ) : owned ? (
+                    item.style_slot ? (
+                      isEquipped ? (
+                        <Pressable style={[styles.actionBtn, styles.actionGhost]} onPress={() => doEquip(item, true)} testID={`unequip-${item.id}`}>
+                          <Text style={[styles.actionText, { color: colors.onSurface }]}>Unequip</Text>
+                        </Pressable>
+                      ) : (
+                        <Pressable style={[styles.actionBtn, styles.actionEquip]} onPress={() => doEquip(item, false)} testID={`equip-${item.id}`}>
+                          <Ionicons name="checkmark-circle-outline" size={14} color="#FFFFFF" />
+                          <Text style={styles.actionText}>Equip</Text>
+                        </Pressable>
+                      )
+                    ) : (
+                      <View style={[styles.actionBtn, styles.actionGhost]}>
+                        <Text style={[styles.actionText, { color: colors.muted }]}>Owned</Text>
+                      </View>
+                    )
+                  ) : (
+                    <Pressable
+                      style={[styles.actionBtn, tokens < item.price_tokens ? styles.actionDisabled : styles.actionBuy]}
+                      onPress={() => doBuy(item)}
+                      disabled={tokens < item.price_tokens}
+                      testID={`buy-${item.id}`}
+                    >
+                      <Ionicons name="cart-outline" size={14} color="#FFFFFF" />
+                      <Text style={styles.actionText}>{tokens < item.price_tokens ? "Need more tokens" : "Buy"}</Text>
+                    </Pressable>
+                  )}
                 </View>
-                <Pressable style={styles.comingSoon} disabled>
-                  <Text style={styles.comingSoonText}>Coming soon</Text>
-                </Pressable>
-              </View>
-            ))}
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -170,6 +273,7 @@ const styles = StyleSheet.create({
   emptySub: { color: colors.muted, textAlign: "center" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   itemCard: { width: "47%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.sm, gap: 4, borderWidth: 1, borderColor: colors.border },
+  itemImageBox: { position: "relative" },
   itemImage: { width: "100%", aspectRatio: 1, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
   itemImagePlaceholder: { alignItems: "center", justifyContent: "center" },
   itemName: { fontWeight: "800", color: colors.onSurface, marginTop: spacing.xs },
@@ -178,6 +282,14 @@ const styles = StyleSheet.create({
   itemPrice: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   itemPriceText: { color: colors.onBrandTertiary, fontWeight: "900", fontSize: font.sm },
   itemStock: { color: colors.muted, fontSize: 11, fontWeight: "700" },
-  comingSoon: { marginTop: 6, backgroundColor: colors.surfaceTertiary, paddingVertical: 8, borderRadius: radius.pill, alignItems: "center" },
-  comingSoonText: { color: colors.muted, fontWeight: "800", fontSize: font.sm },
+  actionBtn: { marginTop: 6, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 8, borderRadius: radius.pill },
+  actionBuy: { backgroundColor: colors.brand },
+  actionEquip: { backgroundColor: "#28a745" },
+  actionGhost: { backgroundColor: colors.surfaceTertiary },
+  actionDisabled: { backgroundColor: colors.surfaceTertiary },
+  actionText: { color: "#FFFFFF", fontWeight: "800", fontSize: font.sm },
+  equippedBadge: { position: "absolute", top: 6, left: 6, flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "#28a745", paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  equippedText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
+  ownedBadge: { position: "absolute", top: 6, left: 6, flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  ownedText: { color: colors.onBrandTertiary, fontWeight: "900", fontSize: 10 },
 });

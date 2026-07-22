@@ -1,16 +1,17 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/auth";
-import { api } from "@/src/api/client";
+import { api, imageUrl } from "@/src/api/client";
 import { Avatar } from "@/src/components/Avatar";
 import { PostCard, type Post } from "@/src/components/PostCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
 type CommentedPost = Post & { my_comment_preview?: string; my_comment_at?: string };
+type EquippedStyles = Record<string, { item_id: string; image_id: string | null; hex_color: string | null; name: string } | null>;
 
 export default function Profile() {
   const router = useRouter();
@@ -25,19 +26,21 @@ export default function Profile() {
   const [bio, setBio] = useState("");
   const [regenNote, setRegenNote] = useState<string | null>(null);
   const [scannerPartners, setScannerPartners] = useState<any[]>([]);
+  const [equipped, setEquipped] = useState<EquippedStyles>({});
 
   const load = useCallback(async () => {
     if (!user) return;
     try {
-      const [ps, cps, bms] = await Promise.all([
+      const [ps, cps, bms, equ] = await Promise.all([
         api.get<Post[]>(`/users/${user.id}/posts`),
         api.get<CommentedPost[]>(`/users/${user.id}/commented-posts`),
         api.get<Post[]>("/me/bookmarks").catch(() => [] as Post[]),
+        api.get<EquippedStyles>("/me/equipped_styles").catch(() => ({} as EquippedStyles)),
       ]);
       setPosts(ps);
       setCommented(cps);
-      // Backend returns newest-bookmarked first; user wants earliest at top → reverse.
       setListened([...bms].reverse());
+      setEquipped(equ);
       try {
           const partners = await api.get<any[]>("/scanner/partners");
           setScannerPartners(partners);
@@ -90,6 +93,10 @@ export default function Profile() {
   };
 
   const joined = user.joined_at ? new Date(user.joined_at).toLocaleDateString() : "";
+  const bgColor = equipped?.bg_color?.hex_color || colors.brand;
+  const bgPatternId = equipped?.bg_pattern?.image_id;
+  const borderId = equipped?.border?.image_id;
+  const avatarId = equipped?.avatar?.image_id;
 
   return (
     <SafeAreaView style={styles.wrap} edges={["top"]}>
@@ -97,7 +104,14 @@ export default function Profile() {
         contentContainerStyle={{ paddingBottom: spacing.xxxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
-        <View style={styles.banner}>
+        <View style={[styles.banner, { backgroundColor: bgColor }]}>
+          {bgPatternId && (
+            <Image
+              source={{ uri: imageUrl(bgPatternId) }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            />
+          )}
           <Pressable
             style={styles.qrBtn}
             onPress={() => router.push("/qr")}
@@ -116,7 +130,7 @@ export default function Profile() {
           </Pressable>
         </View>
         <View style={styles.headerCard}>
-          <Avatar alias={user.alias} size={72} />
+          <Avatar alias={user.alias} size={72} avatarImageId={avatarId} borderImageId={borderId} />
           <Text style={styles.alias} testID="profile-alias">{user.alias}</Text>
           <Text style={styles.joined}>Joined {joined}</Text>
 

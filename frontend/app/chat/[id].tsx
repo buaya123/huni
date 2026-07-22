@@ -21,6 +21,7 @@ import { useAuth } from "@/src/context/auth";
 import { useWS } from "@/src/context/ws";
 import { Avatar } from "@/src/components/Avatar";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { InteractionManager } from "react-native";
 
 type Message = {
   id: string;
@@ -90,7 +91,7 @@ export default function ChatDetail() {
   });
   const [showActions, setShowActions] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
-
+    const lastMessageY = useRef(0);
   const keyboardOffset = useRef(new Animated.Value(0)).current;
   const PAGE_SIZE = 30;
 
@@ -100,6 +101,9 @@ export default function ChatDetail() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const hasScrolled = useRef(false);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+
+  const userDragging = useRef(false);
 
 const load = useCallback(async () => {
     try {
@@ -137,7 +141,8 @@ const load = useCallback(async () => {
 
 
 const loadOlder = useCallback(async () => {
-
+    
+console.log("loadOlder called");
     if (loadingOlder || !hasOlder)
         return;
 
@@ -180,6 +185,19 @@ const loadOlder = useCallback(async () => {
   useEffect(() => { load(); }, [load]);
 
 useEffect(() => {
+    if (loading) return;
+    if (messages.length === 0) return;
+
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            listRef.current?.scrollToEnd({
+                animated: false,
+            });
+        });
+    });
+}, [loading, messages]);
+
+useEffect(() => {
     const unsub = subscribe((ev) => {
         if (ev.type === "message" && ev.conversation_id === id) {
             const msg = ev.message as Message;
@@ -190,12 +208,15 @@ useEffect(() => {
 
                 return [...prev, msg];
             });
-            scrollToLatest();
+            if (isNearBottom) {
+                scrollToLatest();
+            }
         }
     });
 
     return unsub;
-}, [id, subscribe]);
+}, [id, subscribe, isNearBottom]);
+
 
 const scrollToLatest = () => {
     requestAnimationFrame(() => {
@@ -353,32 +374,83 @@ const scrollToLatest = () => {
               : "You can't send messages to this user."}
           </Text>
         </View>
-      )}<View style={{ flex: 1 }}>
+      )}<View
+    style={{ flex: 1 }}
+    onLayout={(e) => {
+        console.log("Container:", e.nativeEvent.layout.height);
+    }}
+    
+>
+    
     {loading ? (
         <View style={styles.center}>
             <ActivityIndicator color={colors.brand} />
         </View>
     ) : (
+    <>
+        {console.log("Message Count:", messages.length)}
+        {console.log(
+            "Actual Last:",
+            messages[messages.length - 1]?.content
+        )}
         <FlatList
-            removeClippedSubviews
-            windowSize={10}
-            maxToRenderPerBatch={15}
-            initialNumToRender={15}
+          onLayout={(e) => {
+                console.log("FlatList:", e.nativeEvent.layout.height);
+            }}
             testID="messages-list"
             ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
-            onEndReached={() => {
-                if (!hasScrolled.current) return;
-                loadOlder();
+            onScrollBeginDrag={() => {
+                userDragging.current = true;
             }}
-            onEndReachedThreshold={0.2}
-            onScroll={() => {
+            onMomentumScrollEnd={(e) => {
+                userDragging.current = false;
+            }}
+
+            // onEndReached={() => {
+            //     console.log("onEndReached", hasScrolled.current);
+            //     if (!hasScrolled.current) return;
+            //     loadOlder();
+            // }}
+            // onEndReachedThreshold={0.2}
+            onScroll={(e) => {
+                console.log("Scroll:", e.nativeEvent.contentOffset.y);
                 hasScrolled.current = true;
+
+                const {
+                    layoutMeasurement,
+                    contentOffset,
+                    contentSize,
+                } = e.nativeEvent;
+                console.log("========== CHAT ==========");
+                console.log("Viewport Height :", layoutMeasurement.height);
+                console.log("Content Height  :", contentSize.height);
+                console.log("Scroll Offset   :", contentOffset.y);
+                console.log(
+                    "Distance Bottom :",
+                    contentSize.height - (contentOffset.y + layoutMeasurement.height)
+                );
+                console.log("Last Bubble Y   :", lastMessageY.current);
+                console.log("==========================");
+
+                const distanceFromBottom =
+                    contentSize.height -
+                    (contentOffset.y + layoutMeasurement.height);
+                    // if (
+                    //     userDragging.current &&
+                    //     contentOffset.y < 150 &&
+                    //     hasOlder &&
+                    //     !loadingOlder
+                    // ) {
+                    //     loadOlder();
+                    // }
+
+                setIsNearBottom(distanceFromBottom < 100);
             }}
             contentContainerStyle={{
-                padding: spacing.lg,
-                paddingBottom: keyboardHeight + 90,
+                paddingHorizontal: spacing.lg,
+                paddingTop: spacing.lg,
             }}
             ListEmptyComponent={
                 <Text style={styles.emptyText}>
@@ -394,6 +466,18 @@ const scrollToLatest = () => {
                 ) : null
             }
             renderItem={({ item, index }) => {
+
+                 if (index === messages.length - 1) {
+                    console.log("LAST INDEX:", index);
+                    console.log("LAST MESSAGE:", item.content);
+                }
+
+                if (index === messages.length - 1) {
+                    console.log("LAST ITEM");
+                    console.log("Index:", index);
+                    console.log("Content:", item.content);
+                    console.log("Time:", item.created_at);
+                }
 
                 const previous = messages[index - 1];
 
@@ -425,9 +509,10 @@ const scrollToLatest = () => {
                         <View
                             style={[
                                 styles.bubbleRow,
-                                mine
-                                    ? styles.mineRow
-                                    : styles.otherRow,
+                                mine ? styles.mineRow : styles.otherRow,
+                                index !== messages.length - 1 && {
+                                    marginBottom: spacing.sm,
+                                },
                             ]}
                         >
                             <View
@@ -465,23 +550,15 @@ const scrollToLatest = () => {
                 );
             }}
         />
+    </>
     )}
 </View>
 
-        <Animated.View
-    style={[
-        styles.inputBar,
-        {
-            transform: [
-                {
-                    translateY: Animated.add(
-                        Animated.multiply(keyboardOffset, -1),
-                        -16
-                    ),
-                },
-            ],
-        },
-    ]}
+        <View
+    style={styles.inputBar}
+    onLayout={(e) => {
+        console.log("InputBar:", e.nativeEvent.layout.height);
+    }}
 >
           <TextInput
             editable={!status.blocked}
@@ -503,7 +580,7 @@ const scrollToLatest = () => {
           <Pressable onPress={submit} disabled={status.blocked ||!text.trim() ||sending} style={styles.sendBtn} testID="send-message-btn">
             <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
           </Pressable>
-        </Animated.View>
+        </View>
     </SafeAreaView>
   );
 }
@@ -519,7 +596,6 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: "center", color: colors.muted, marginTop: spacing.xxl },
   bubbleRow: {
     flexDirection: "row",
-    marginBottom: spacing.sm,
 },
   mineRow: { justifyContent: "flex-end" },
   otherRow: { justifyContent: "flex-start" },
@@ -544,11 +620,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
 
-    position: "absolute",
-
-    left: 0,
-    right: 0,
-    bottom: 0,
 },
   input: {
     flex: 1, backgroundColor: colors.surface, borderRadius: radius.lg,

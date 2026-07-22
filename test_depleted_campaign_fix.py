@@ -7,7 +7,7 @@ import requests
 import time
 import json
 
-BASE_URL = "https://huni-qr-campaigns.preview.emergentagent.com/api"
+BASE_URL = "https://input-row-behavior.preview.emergentagent.com/api"
 
 def login(email, password):
     """Login and return token"""

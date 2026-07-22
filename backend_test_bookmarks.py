@@ -8,7 +8,7 @@ import time
 from typing import Dict, Any, Optional
 
 # Backend URL
-BASE_URL = "https://huni-qr-campaigns.preview.emergentagent.com/api"
+BASE_URL = "https://input-row-behavior.preview.emergentagent.com/api"
 
 # Test credentials
 ADMIN_EMAIL = "demo1@huni.app"

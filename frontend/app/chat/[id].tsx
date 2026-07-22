@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
@@ -9,17 +10,16 @@ import {
   View,
   ViewToken,
   KeyboardAvoidingView,
-    Platform,
+  Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { useWS } from "@/src/context/ws";
 import { Avatar } from "@/src/components/Avatar";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
-import { InteractionManager } from "react-native";
 
 type Message = {
   id: string;
@@ -125,6 +125,8 @@ export default function ChatDetail() {
   const router = useRouter();
   const { user } = useAuth();
   const { subscribe } = useWS();
+  const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [rows, setRows] = useState<ChatRow[]>([]);
 
@@ -300,6 +302,26 @@ useEffect(() => {
     return unsub;
 }, [id, subscribe, isNearBottom]);
 
+// Scroll to bottom when keyboard opens so the newest message stays visible above the input bar.
+useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvent, () => {
+        setKeyboardVisible(true);
+        // Small delay lets KAV finish resizing before we scroll.
+        requestAnimationFrame(() => {
+            listRef.current?.scrollToEnd({ animated: true });
+        });
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+        setKeyboardVisible(false);
+    });
+    return () => {
+        showSub.remove();
+        hideSub.remove();
+    };
+}, []);
+
 
 const scrollToLatest = (animated = false) => {
 
@@ -372,7 +394,12 @@ const scrollToLatest = (animated = false) => {
   };
 
   return (
-    <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
+    <SafeAreaView style={styles.wrap} edges={["top"]}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+      >
       <View style={styles.topBar}>
         <Pressable onPress={() => router.replace("/(tabs)/messages")} hitSlop={12} testID="back-btn">
           <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
@@ -448,8 +475,9 @@ const scrollToLatest = (animated = false) => {
 
         <FlatList
             viewabilityConfig={viewabilityConfig}
-            automaticallyAdjustKeyboardInsets={true}
             onViewableItemsChanged={onViewableItemsChanged}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
             
             testID="messages-list"
             ref={listRef}
@@ -585,7 +613,7 @@ const scrollToLatest = (animated = false) => {
 </View>
 
 
-            <View style={styles.inputBar}>
+            <View style={[styles.inputBar, { paddingBottom: keyboardVisible ? spacing.sm : spacing.md + insets.bottom }]}>
           <TextInput
             editable={!status.blocked}
             testID="message-input"
@@ -607,6 +635,7 @@ const scrollToLatest = (animated = false) => {
             <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
           </Pressable>
             </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
     
   );

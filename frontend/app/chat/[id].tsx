@@ -9,9 +9,9 @@ import {
   TextInput,
   View,
   ViewToken,
-  KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -397,7 +397,7 @@ const scrollToLatest = (animated = false) => {
     <SafeAreaView style={styles.wrap} edges={["top"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior="padding"
         keyboardVerticalOffset={0}
       >
       <View style={styles.topBar}>

@@ -27,15 +27,17 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
-      <SafeAreaProvider>
-        <AuthProvider>
-          <WSProvider>
-            <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
+      <KeyboardProvider>
+        <SafeAreaProvider>
+          <AuthProvider>
+            <WSProvider>
+              <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
  
-          </WSProvider>
-        </AuthProvider>
-      </SafeAreaProvider>
+            </WSProvider>
+          </AuthProvider>
+        </SafeAreaProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

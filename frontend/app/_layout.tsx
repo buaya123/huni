@@ -9,7 +9,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/auth";
 import { WSProvider } from "@/src/context/ws";
 import { colors } from "@/src/theme/tokens";
-
+import { KeyboardProvider } from "react-native-keyboard-controller";
 LogBox.ignoreAllLogs(true);
 
 SplashScreen.preventAutoHideAsync();
@@ -32,6 +32,7 @@ export default function RootLayout() {
           <WSProvider>
             <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
             <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
+ 
           </WSProvider>
         </AuthProvider>
       </SafeAreaProvider>

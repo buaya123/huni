@@ -2,19 +2,17 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Keyboard,
-  KeyboardEvent,
-  Animated,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
+  ViewToken,
+  KeyboardAvoidingView,
+    Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
@@ -31,6 +29,18 @@ type Message = {
   content: string;
   created_at: string;
 };
+
+type ChatRow =
+    | {
+          type: "day";
+          id: string;
+          label: string;
+      }
+    | {
+          type: "message";
+          id: string;
+          message: Message;
+      };
 
 type ConversationStatus = {
   blocked: boolean;
@@ -75,13 +85,54 @@ function formatDay(date: string) {
 
 }
 
+function buildRows(messages: Message[]): ChatRow[] {
+
+    const rows: ChatRow[] = [];
+
+    let previousDay: string | null = null;
+
+    for (const message of messages) {
+
+        const currentDay =
+            new Date(message.created_at).toDateString();
+
+        if (currentDay !== previousDay) {
+
+            rows.push({
+                type: "day",
+                id: `day-${currentDay}`,
+                label: formatDay(message.created_at),
+            });
+
+            previousDay = currentDay;
+
+        }
+
+        rows.push({
+            type: "message",
+            id: message.id,
+            message,
+        });
+
+    }
+
+    return rows;
+
+}
+
 export default function ChatDetail() {
   const { id, alias, userId } = useLocalSearchParams<{ id: string; alias?: string; userId?: string }>();
   const router = useRouter();
   const { user } = useAuth();
   const { subscribe } = useWS();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [rows, setRows] = useState<ChatRow[]>([]);
+
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setRows(buildRows(messages));
+}, [messages]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<ConversationStatus>({
@@ -90,20 +141,54 @@ export default function ChatDetail() {
     blocked_by_other: false,
   });
   const [showActions, setShowActions] = useState(false);
-  const listRef = useRef<FlatList<Message>>(null);
-    const lastMessageY = useRef(0);
-  const keyboardOffset = useRef(new Animated.Value(0)).current;
+  const listRef = useRef<FlatList<ChatRow>>(null);
+  const initialScrollDone = useRef(false);
+  const flatListHeight = useRef(0);
+  const previousFlatListHeight = useRef(0);
+
+  const contentHeight = useRef(0);
+  const scrollOffset = useRef(0);
+
+const onViewableItemsChanged = useRef(
+    ({
+        viewableItems,
+    }: {
+        viewableItems: ViewToken[];
+    }) => {
+
+        let lastId: string | null = null;
+
+        for (const token of viewableItems) {
+
+            const row = token.item as ChatRow;
+
+            if (row.type === "message") {
+                lastId = row.id;
+            }
+
+        }
+
+        lastVisibleMessageId.current = lastId;
+
+    }
+).current;
+
+  const viewabilityConfig = {
+    itemVisiblePercentThreshold: 90,
+};
+const lastVisibleMessageId =
+    useRef<string | null>(null);
+  
   const PAGE_SIZE = 30;
 
   const [offset, setOffset] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasOlder, setHasOlder] = useState(true);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  const hasScrolled = useRef(false);
-  const [isNearBottom, setIsNearBottom] = useState(true);
+  const previousHeight = useRef(0);
 
   const userDragging = useRef(false);
+  const isNearBottom = useRef(true);
 
 const load = useCallback(async () => {
     try {
@@ -116,6 +201,16 @@ const load = useCallback(async () => {
                 `/chat/${id}/status`
             ),
         ]);
+
+        console.log("ROWS:", rows.length);
+
+        rows.forEach((m, i) => {
+            console.log(
+                i,
+                m.created_at,
+                m.content
+            );
+        });
 
         setMessages(rows);
 
@@ -142,7 +237,6 @@ const load = useCallback(async () => {
 
 const loadOlder = useCallback(async () => {
     
-console.log("loadOlder called");
     if (loadingOlder || !hasOlder)
         return;
 
@@ -184,18 +278,7 @@ console.log("loadOlder called");
 
   useEffect(() => { load(); }, [load]);
 
-useEffect(() => {
-    if (loading) return;
-    if (messages.length === 0) return;
 
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            listRef.current?.scrollToEnd({
-                animated: false,
-            });
-        });
-    });
-}, [loading, messages]);
 
 useEffect(() => {
     const unsub = subscribe((ev) => {
@@ -208,7 +291,7 @@ useEffect(() => {
 
                 return [...prev, msg];
             });
-            if (isNearBottom) {
+            if (isNearBottom.current) {
                 scrollToLatest();
             }
         }
@@ -218,67 +301,24 @@ useEffect(() => {
 }, [id, subscribe, isNearBottom]);
 
 
-const scrollToLatest = () => {
+const scrollToLatest = (animated = false) => {
+
     requestAnimationFrame(() => {
-        listRef.current?.scrollToEnd({
-            animated: true,
-        });
+
+        if (isNearBottom.current) {
+            requestAnimationFrame(() => {
+                listRef.current?.scrollToEnd({
+                    animated: true,
+                });
+            });
+        }
+
     });
+
 };
 
 
 
-  useEffect(() => {
-
-    const show = Keyboard.addListener(
-    Platform.OS === "ios"
-        ? "keyboardWillShow"
-        : "keyboardDidShow",
-    (e: KeyboardEvent) => {
-
-        Animated.spring(
-            keyboardOffset,
-            {
-                toValue: e.endCoordinates.height,
-                damping: 18,
-                stiffness: 200,
-                mass: 0.9,
-                useNativeDriver: false,
-            }
-        ).start();
-
-        setKeyboardHeight(e.endCoordinates.height);
-
-    }
-);
-
-    const hide = Keyboard.addListener(
-        Platform.OS === "ios"
-            ? "keyboardWillHide"
-            : "keyboardDidHide",
-        () => {
-
-            Animated.timing(
-                keyboardOffset,
-                {
-                    toValue: 0,
-                    duration: 250,
-                    useNativeDriver: false,
-                }
-            ).start();
-            setKeyboardHeight(0);
-
-        }
-    );
-
-    return () => {
-
-        show.remove();
-        hide.remove();
-
-    };
-
-}, []);
 
  const submit = async () => {
     if (status.blocked) return;
@@ -374,13 +414,30 @@ const scrollToLatest = () => {
               : "You can't send messages to this user."}
           </Text>
         </View>
-      )}<View
-    style={{ flex: 1 }}
+      )}
+      
+    <View style={{ flex: 1 }} 
     onLayout={(e) => {
-        console.log("Container:", e.nativeEvent.layout.height);
-    }}
-    
->
+                const newHeight = e.nativeEvent.layout.height;
+
+                console.log("FlatList height:", newHeight);
+
+                if (
+                    previousHeight.current &&
+                    newHeight < previousHeight.current &&
+                    isNearBottom.current
+                ) {
+                    requestAnimationFrame(() => {
+                        listRef.current?.scrollToEnd({
+                            animated: false,
+                        });
+                    });
+                }
+
+                previousHeight.current = newHeight;
+            }}
+    >
+
     
     {loading ? (
         <View style={styles.center}>
@@ -388,69 +445,39 @@ const scrollToLatest = () => {
         </View>
     ) : (
     <>
-        {console.log("Message Count:", messages.length)}
-        {console.log(
-            "Actual Last:",
-            messages[messages.length - 1]?.content
-        )}
+
         <FlatList
-          onLayout={(e) => {
-                console.log("FlatList:", e.nativeEvent.layout.height);
-            }}
+            viewabilityConfig={viewabilityConfig}
+            automaticallyAdjustKeyboardInsets={true}
+            onViewableItemsChanged={onViewableItemsChanged}
+            
             testID="messages-list"
             ref={listRef}
-            data={messages}
-            keyExtractor={(m) => m.id}
+            data={rows}
+            keyExtractor={(row) => row.id}
             onScrollBeginDrag={() => {
                 userDragging.current = true;
             }}
             onMomentumScrollEnd={(e) => {
                 userDragging.current = false;
             }}
-
-            // onEndReached={() => {
-            //     console.log("onEndReached", hasScrolled.current);
-            //     if (!hasScrolled.current) return;
-            //     loadOlder();
-            // }}
-            // onEndReachedThreshold={0.2}
+            onContentSizeChange={(_, h) => {
+                contentHeight.current = h;
+            }}
             onScroll={(e) => {
-                console.log("Scroll:", e.nativeEvent.contentOffset.y);
-                hasScrolled.current = true;
-
-                const {
-                    layoutMeasurement,
-                    contentOffset,
-                    contentSize,
-                } = e.nativeEvent;
-                console.log("========== CHAT ==========");
-                console.log("Viewport Height :", layoutMeasurement.height);
-                console.log("Content Height  :", contentSize.height);
-                console.log("Scroll Offset   :", contentOffset.y);
-                console.log(
-                    "Distance Bottom :",
-                    contentSize.height - (contentOffset.y + layoutMeasurement.height)
-                );
-                console.log("Last Bubble Y   :", lastMessageY.current);
-                console.log("==========================");
+                const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
 
                 const distanceFromBottom =
                     contentSize.height -
                     (contentOffset.y + layoutMeasurement.height);
-                    // if (
-                    //     userDragging.current &&
-                    //     contentOffset.y < 150 &&
-                    //     hasOlder &&
-                    //     !loadingOlder
-                    // ) {
-                    //     loadOlder();
-                    // }
 
-                setIsNearBottom(distanceFromBottom < 100);
+                isNearBottom.current = distanceFromBottom < 80;
             }}
+            scrollEventThrottle={16}
             contentContainerStyle={{
                 paddingHorizontal: spacing.lg,
                 paddingTop: spacing.lg,
+                paddingBottom: 12,
             }}
             ListEmptyComponent={
                 <Text style={styles.emptyText}>
@@ -465,28 +492,26 @@ const scrollToLatest = () => {
                     />
                 ) : null
             }
-            renderItem={({ item, index }) => {
+            renderItem={({ item: row, index }) => {
 
-                 if (index === messages.length - 1) {
-                    console.log("LAST INDEX:", index);
-                    console.log("LAST MESSAGE:", item.content);
+                if (row.type === "day") {
+
+                    return (
+                        <View style={styles.dayDivider}>
+                            <View style={styles.dayLine} />
+
+                            <Text style={styles.dayText}>
+                                {row.label}
+                            </Text>
+
+                            <View style={styles.dayLine} />
+                        </View>
+                    );
+
                 }
 
-                if (index === messages.length - 1) {
-                    console.log("LAST ITEM");
-                    console.log("Index:", index);
-                    console.log("Content:", item.content);
-                    console.log("Time:", item.created_at);
-                }
+                const item = row.message;
 
-                const previous = messages[index - 1];
-
-                const currentDay = new Date(item.created_at).toDateString();
-                const previousDay = previous
-                    ? new Date(previous.created_at).toDateString()
-                    : null;
-
-                const showDay = previousDay !== currentDay;
 
                 const mine =
                     item.sender_id === user?.id;
@@ -494,25 +519,29 @@ const scrollToLatest = () => {
                 return (
                     <>
 
-                        {showDay && (
-                            <View style={styles.dayDivider}>
-                                <View style={styles.dayLine} />
-
-                                <Text style={styles.dayText}>
-                                    {formatDay(item.created_at)}
-                                </Text>
-
-                                <View style={styles.dayLine} />
-                            </View>
-                        )}
 
                         <View
+                            onLayout={() => {
+
+                                if (
+                                    !initialScrollDone.current &&
+                                    index === rows.length - 1
+                                ) {
+
+                                    initialScrollDone.current = true;
+
+                                    requestAnimationFrame(() => {
+                                        scrollToLatest(false);
+                                    });
+
+                                }
+
+                            }}
                             style={[
                                 styles.bubbleRow,
-                                mine ? styles.mineRow : styles.otherRow,
-                                index !== messages.length - 1 && {
-                                    marginBottom: spacing.sm,
-                                },
+                                mine
+                                    ? styles.mineRow
+                                    : styles.otherRow,
                             ]}
                         >
                             <View
@@ -548,18 +577,15 @@ const scrollToLatest = () => {
 
                     </>
                 );
-            }}
+            }
+        }
         />
     </>
     )}
 </View>
 
-        <View
-    style={styles.inputBar}
-    onLayout={(e) => {
-        console.log("InputBar:", e.nativeEvent.layout.height);
-    }}
->
+
+            <View style={styles.inputBar}>
           <TextInput
             editable={!status.blocked}
             testID="message-input"
@@ -580,8 +606,9 @@ const scrollToLatest = () => {
           <Pressable onPress={submit} disabled={status.blocked ||!text.trim() ||sending} style={styles.sendBtn} testID="send-message-btn">
             <Ionicons name="send" size={18} color={text.trim() ? "#FFF" : colors.muted} />
           </Pressable>
-        </View>
+            </View>
     </SafeAreaView>
+    
   );
 }
 
@@ -596,6 +623,7 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: "center", color: colors.muted, marginTop: spacing.xxl },
   bubbleRow: {
     flexDirection: "row",
+    marginVertical: 3,
 },
   mineRow: { justifyContent: "flex-end" },
   otherRow: { justifyContent: "flex-start" },
@@ -612,14 +640,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-end",
     gap: spacing.sm,
-
     padding: spacing.md,
-
-    backgroundColor: colors.surfaceSecondary,
-
     borderTopWidth: 1,
     borderTopColor: colors.border,
-
 },
   input: {
     flex: 1, backgroundColor: colors.surface, borderRadius: radius.lg,

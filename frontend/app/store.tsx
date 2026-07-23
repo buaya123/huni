@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View ,FlatList} from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -42,6 +42,7 @@ export default function StoreScreen() {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [equipped, setEquipped] = useState<EquippedStyles>({});
   const [activeCat, setActiveCat] = useState<string>("appearance");
+  const [activeSub, setActiveSub] = useState<string | null>(null);
   const [tokens, setTokens] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -70,7 +71,19 @@ export default function StoreScreen() {
   const ownedIds = useMemo(() => new Set(purchases.map((p) => p.item.id)), [purchases]);
   const equippedIds = useMemo(() => new Set(Object.values(equipped).filter(Boolean).map((v) => v!.item_id)), [equipped]);
 
-  const filtered = useMemo(() => items.filter((i) => i.category === activeCat), [items, activeCat]);
+  const filtered = useMemo(
+    () =>
+        items.filter((item) => {
+            if (item.category !== activeCat)
+                return false;
+
+            if (activeSub === null)
+                return true;
+
+            return item.subcategory === activeSub;
+        }),
+    [items, activeCat, activeSub]
+);
   const catList: [string, CategoryDef[]][] = useMemo(() => Object.entries(categories), [categories]);
   const subs = categories[activeCat] || [];
 
@@ -113,156 +126,408 @@ export default function StoreScreen() {
     } finally { setBusyId(null); }
   };
 
+
+  const renderItem = ({ item }: { item: StoreItem }) => {
+  const owned = ownedIds.has(item.id);
+  const isEquipped = equippedIds.has(item.id);
+  const isBusy = busyId === item.id;
+
   return (
-    <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
-      <View style={styles.topBar}>
-        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/profile"))} hitSlop={12}>
-          <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
-        </Pressable>
-        <Text style={styles.title}>Huni Store</Text>
-        <Pressable onPress={() => router.push("/huni-guide")} hitSlop={12} testID="info-btn">
-          <Ionicons name="information-circle-outline" size={22} color={colors.onSurface} />
-        </Pressable>
-      </View>
-
-      <View style={styles.balanceBar}>
-        <Ionicons name="cash-outline" size={16} color={colors.onBrandTertiary} />
-        <Text style={styles.balanceText}>{tokens.toLocaleString()} tokens</Text>
-      </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabsRow}
-        contentContainerStyle={{ paddingHorizontal: spacing.md, gap: spacing.sm }}
-      >
-        {catList.length === 0 && Object.keys(CATEGORY_LABELS).map((k) => (
-          <Pressable key={k} style={[styles.tab, activeCat === k && styles.tabActive]} onPress={() => setActiveCat(k)} testID={`cat-${k}`}>
-            <Ionicons name={CATEGORY_LABELS[k].icon as never} size={14} color={activeCat === k ? "#FFFFFF" : colors.brand} />
-            <Text style={[styles.tabText, activeCat === k && { color: "#FFFFFF" }]}>{CATEGORY_LABELS[k].label}</Text>
-          </Pressable>
-        ))}
-        {catList.map(([k]) => (
-          <Pressable key={k} style={[styles.tab, activeCat === k && styles.tabActive]} onPress={() => setActiveCat(k)} testID={`cat-${k}`}>
-            <Ionicons name={(CATEGORY_LABELS[k]?.icon || "grid-outline") as never} size={14} color={activeCat === k ? "#FFFFFF" : colors.brand} />
-            <Text style={[styles.tabText, activeCat === k && { color: "#FFFFFF" }]}>{CATEGORY_LABELS[k]?.label ?? k}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      <ScrollView
-        contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />}
-      >
-        {subs.length > 0 && (
-          <View style={styles.subRow}>
-            {subs.map((s) => (
-              <View key={s.id} style={styles.subChip}>
-                <Ionicons name={s.icon as never} size={12} color={colors.brand} />
-                <Text style={styles.subChipText}>{s.label}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {loading ? (
-          <View style={{ alignItems: "center", padding: spacing.xl }}><ActivityIndicator color={colors.brand} /></View>
-        ) : filtered.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <View style={styles.emptyIcon}><Ionicons name="cube-outline" size={36} color={colors.brand} /></View>
-            <Text style={styles.emptyTitle}>Nothing here yet</Text>
-            <Text style={styles.emptySub}>Huni admins are stocking the shelves. Drop in later!</Text>
-          </View>
+    <View style={styles.itemCard} testID={`item-${item.id}`}>
+      <View style={styles.itemImageBox}>
+        {item.hex_color ? (
+          <View style={[styles.itemImage, { backgroundColor: item.hex_color }]} />
+        ) : item.image_id ? (
+          <Image
+            source={{ uri: imageUrl(item.image_id) }}
+            style={styles.itemImage}
+            resizeMode="cover"
+          />
         ) : (
-          <View style={styles.grid}>
-            {filtered.map((item) => {
-              const owned = ownedIds.has(item.id);
-              const isEquipped = equippedIds.has(item.id);
-              const isBusy = busyId === item.id;
-              return (
-                <View key={item.id} style={styles.itemCard} testID={`item-${item.id}`}>
-                  <View style={styles.itemImageBox}>
-                    {item.hex_color ? (
-                      <View style={[styles.itemImage, { backgroundColor: item.hex_color }]} />
-                    ) : item.image_id ? (
-                      <Image source={{ uri: imageUrl(item.image_id) }} style={styles.itemImage} resizeMode="cover" />
-                    ) : (
-                      <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                        <Ionicons name="cube-outline" size={32} color={colors.muted} />
-                      </View>
-                    )}
-                    {isEquipped && (
-                      <View style={styles.equippedBadge}>
-                        <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
-                        <Text style={styles.equippedText}>Equipped</Text>
-                      </View>
-                    )}
-                    {owned && !isEquipped && (
-                      <View style={styles.ownedBadge}>
-                        <Ionicons name="bag-check-outline" size={12} color={colors.onBrandTertiary} />
-                        <Text style={styles.ownedText}>Owned</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.itemDesc} numberOfLines={2}>{item.description}</Text>
-                  <View style={styles.itemFooter}>
-                    <View style={styles.itemPrice}>
-                      <Ionicons name="cash-outline" size={12} color={colors.onBrandTertiary} />
-                      <Text style={styles.itemPriceText}>{item.price_tokens}</Text>
-                    </View>
-                    <Text style={styles.itemStock}>{item.stock < 0 ? "∞" : `${item.stock} left`}</Text>
-                  </View>
-
-                  {isBusy ? (
-                    <View style={styles.actionBtn}><ActivityIndicator color={colors.brand} /></View>
-                  ) : owned ? (
-                    item.style_slot ? (
-                      isEquipped ? (
-                        <Pressable style={[styles.actionBtn, styles.actionGhost]} onPress={() => doEquip(item, true)} testID={`unequip-${item.id}`}>
-                          <Text style={[styles.actionText, { color: colors.onSurface }]}>Unequip</Text>
-                        </Pressable>
-                      ) : (
-                        <Pressable style={[styles.actionBtn, styles.actionEquip]} onPress={() => doEquip(item, false)} testID={`equip-${item.id}`}>
-                          <Ionicons name="checkmark-circle-outline" size={14} color="#FFFFFF" />
-                          <Text style={styles.actionText}>Equip</Text>
-                        </Pressable>
-                      )
-                    ) : (
-                      <View style={[styles.actionBtn, styles.actionGhost]}>
-                        <Text style={[styles.actionText, { color: colors.muted }]}>Owned</Text>
-                      </View>
-                    )
-                  ) : (
-                    <Pressable
-                      style={[styles.actionBtn, tokens < item.price_tokens ? styles.actionDisabled : styles.actionBuy]}
-                      onPress={() => doBuy(item)}
-                      disabled={tokens < item.price_tokens}
-                      testID={`buy-${item.id}`}
-                    >
-                      <Ionicons name="cart-outline" size={14} color="#FFFFFF" />
-                      <Text style={styles.actionText}>{tokens < item.price_tokens ? "Need more tokens" : "Buy"}</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })}
+          <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+            <Ionicons name="cube-outline" size={32} color={colors.muted} />
           </View>
         )}
-      </ScrollView>
-    </SafeAreaView>
+
+        {isEquipped && (
+          <View style={styles.equippedBadge}>
+            <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
+            <Text style={styles.equippedText}>Equipped</Text>
+          </View>
+        )}
+
+        {owned && !isEquipped && (
+          <View style={styles.ownedBadge}>
+            <Ionicons
+              name="bag-check-outline"
+              size={12}
+              color={colors.onBrandTertiary}
+            />
+            <Text style={styles.ownedText}>Owned</Text>
+          </View>
+        )}
+      </View>
+
+      <Text style={styles.itemName} numberOfLines={1}>
+        {item.name}
+      </Text>
+
+      <Text style={styles.itemDesc} numberOfLines={2}>
+        {item.description}
+      </Text>
+
+      <View style={styles.itemFooter}>
+        <View style={styles.itemPrice}>
+          <Ionicons
+            name="cash-outline"
+            size={12}
+            color={colors.onBrandTertiary}
+          />
+          <Text style={styles.itemPriceText}>{item.price_tokens}</Text>
+        </View>
+
+        <Text style={styles.itemStock}>
+          {item.stock < 0 ? "∞" : `${item.stock} left`}
+        </Text>
+      </View>
+
+      {isBusy ? (
+        <View style={styles.actionBtn}>
+          <ActivityIndicator color={colors.brand} />
+        </View>
+      ) : owned ? (
+        item.style_slot ? (
+          isEquipped ? (
+            <Pressable
+              style={[styles.actionBtn, styles.actionGhost]}
+              onPress={() => doEquip(item, true)}
+            >
+              <Text
+                style={[
+                  styles.actionText,
+                  { color: colors.onSurface },
+                ]}
+              >
+                Unequip
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={[styles.actionBtn, styles.actionEquip]}
+              onPress={() => doEquip(item, false)}
+            >
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={14}
+                color="#FFFFFF"
+              />
+              <Text style={styles.actionText}>Equip</Text>
+            </Pressable>
+          )
+        ) : (
+          <View
+            style={[
+              styles.actionBtn,
+              styles.actionGhost,
+            ]}
+          >
+            <Text
+              style={[
+                styles.actionText,
+                { color: colors.muted },
+              ]}
+            >
+              Owned
+            </Text>
+          </View>
+        )
+      ) : (
+        <Pressable
+          style={[
+            styles.actionBtn,
+            tokens < item.price_tokens
+              ? styles.actionDisabled
+              : styles.actionBuy,
+          ]}
+          onPress={() => doBuy(item)}
+          disabled={tokens < item.price_tokens}
+        >
+          <Ionicons
+            name="cart-outline"
+            size={14}
+            color="#FFFFFF"
+          />
+          <Text style={styles.actionText}>
+            {tokens < item.price_tokens
+              ? "Need more tokens"
+              : "Buy"}
+          </Text>
+        </Pressable>
+      )}
+    </View>
   );
+};
+
+return (
+  <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
+    <View style={styles.topBar}>
+      <Pressable
+        onPress={() =>
+          router.canGoBack()
+            ? router.back()
+            : router.replace("/(tabs)/profile")
+        }
+        hitSlop={12}
+      >
+        <Ionicons
+          name="chevron-back"
+          size={26}
+          color={colors.onSurface}
+        />
+      </Pressable>
+
+      <Text style={styles.title}>Huni Store</Text>
+
+      <Pressable
+        onPress={() => router.push("/huni-guide")}
+        hitSlop={12}
+        testID="info-btn"
+      >
+        <Ionicons
+          name="information-circle-outline"
+          size={22}
+          color={colors.onSurface}
+        />
+      </Pressable>
+    </View>
+
+    <View style={styles.balanceBar}>
+      <Ionicons
+        name="cash-outline"
+        size={16}
+        color={colors.onBrandTertiary}
+      />
+      <Text style={styles.balanceText}>
+        {tokens.toLocaleString()} tokens
+      </Text>
+    </View>
+<View style={{ paddingVertical: 4 }}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.tabsRow}
+      contentContainerStyle={{
+        paddingHorizontal: spacing.md,
+        paddingVertical: 4,
+        gap: spacing.sm,
+      }}
+    >
+      {catList.length === 0 &&
+        Object.keys(CATEGORY_LABELS).map((k) => (
+          <Pressable
+            key={k}
+            style={[
+              styles.tab,
+              activeCat === k && styles.tabActive,
+            ]}
+            onPress={() => {
+              setActiveCat(k);
+              setActiveSub(null);
+            }}
+          >
+            <Ionicons
+              name={CATEGORY_LABELS[k].icon as never}
+              size={14}
+              color={
+                activeCat === k
+                  ? "#FFFFFF"
+                  : colors.brand
+              }
+            />
+
+            <Text
+              style={[
+                styles.tabText,
+                activeCat === k && { color: "#FFFFFF" },
+              ]}
+            >
+              {CATEGORY_LABELS[k].label}
+            </Text>
+          </Pressable>
+        ))}
+
+      {catList.map(([k]) => (
+        <Pressable
+          key={k}
+          style={[
+            styles.tab,
+            activeCat === k && styles.tabActive,
+          ]}
+          onPress={() => {
+            setActiveCat(k);
+            setActiveSub(null);
+          }}
+        >
+          <Ionicons
+            name={
+              (CATEGORY_LABELS[k]?.icon ??
+                "grid-outline") as never
+            }
+            size={14}
+            color={
+              activeCat === k
+                ? "#FFFFFF"
+                : colors.brand
+            }
+          />
+
+          <Text
+            style={[
+              styles.tabText,
+              activeCat === k && { color: "#FFFFFF" },
+            ]}
+          >
+            {CATEGORY_LABELS[k]?.label ?? k}
+          </Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+</View>
+    {loading ? (
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <ActivityIndicator color={colors.brand} />
+      </View>
+    ) : (
+      <FlatList
+        data={filtered}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        columnWrapperStyle={styles.gridRow}
+        contentContainerStyle={[
+          styles.gridContent,
+          {
+            padding: spacing.lg,
+          },
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              load();
+            }}
+            tintColor={colors.brand}
+          />
+        }
+        ListHeaderComponent={
+          subs.length > 0 ? (
+            <View
+              style={[
+                styles.subRow,
+                { marginBottom: spacing.md },
+              ]}
+            >
+              {subs.map((s) => (
+                <Pressable
+                  key={s.id}
+                  style={[
+                    styles.subChip,
+                    activeSub === s.id &&
+                      styles.subChipActive,
+                  ]}
+                  onPress={() =>
+                    setActiveSub(
+                      activeSub === s.id
+                        ? null
+                        : s.id
+                    )
+                  }
+                >
+                  <Ionicons
+                    name={s.icon as never}
+                    size={12}
+                    color={
+                      activeSub === s.id
+                        ? "#FFFFFF"
+                        : colors.brand
+                    }
+                  />
+
+                  <Text
+                    style={[
+                      styles.subChipText,
+                      activeSub === s.id && {
+                        color: "#FFFFFF",
+                      },
+                    ]}
+                  >
+                    {s.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyBox}>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name="cube-outline"
+                size={36}
+                color={colors.brand}
+              />
+            </View>
+
+            <Text style={styles.emptyTitle}>
+              Nothing here yet
+            </Text>
+
+            <Text style={styles.emptySub}>
+              Huni admins are stocking the
+              shelves. Drop in later!
+            </Text>
+          </View>
+        }
+      />
+    )}
+  </SafeAreaView>
+);
 }
 
 const styles = StyleSheet.create({
+  subChipActive: {
+    backgroundColor: colors.brand,
+    borderColor: colors.brand,
+},
   wrap: { flex: 1, backgroundColor: colors.surface },
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md },
   title: { fontSize: font.lg, fontWeight: "700", color: colors.onSurface },
   balanceBar: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "center", backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, marginBottom: spacing.sm },
   balanceText: { color: colors.onBrandTertiary, fontWeight: "800" },
-  tabsRow: { flexGrow: 0, paddingVertical: spacing.xs },
-  tab: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
-  tabActive: { backgroundColor: colors.brand },
+  tabsRow: {
+  flexGrow: 0,
+  paddingVertical: spacing.xs,
+  overflow: "visible",
+},
+  tab: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  paddingHorizontal: spacing.md,
+  paddingVertical: 8,
+  borderRadius: radius.pill,
+  backgroundColor: colors.surfaceTertiary,
+
+  marginVertical: 4,
+},
+tabActive: { backgroundColor: colors.brand },
   tabText: { color: colors.brand, fontWeight: "800", fontSize: font.sm },
   subRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   subChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: colors.surfaceSecondary, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
@@ -271,8 +536,11 @@ const styles = StyleSheet.create({
   emptyIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   emptyTitle: { fontWeight: "800", color: colors.onSurface, fontSize: font.lg },
   emptySub: { color: colors.muted, textAlign: "center" },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  itemCard: { width: "47%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.sm, gap: 4, borderWidth: 1, borderColor: colors.border },
+  itemCard: {
+    flex: 1,
+    maxWidth: "48%",
+    marginBottom: spacing.md,
+},
   itemImageBox: { position: "relative" },
   itemImage: { width: "100%", aspectRatio: 1, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
   itemImagePlaceholder: { alignItems: "center", justifyContent: "center" },
@@ -292,4 +560,11 @@ const styles = StyleSheet.create({
   equippedText: { color: "#FFFFFF", fontWeight: "900", fontSize: 10 },
   ownedBadge: { position: "absolute", top: 6, left: 6, flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   ownedText: { color: colors.onBrandTertiary, fontWeight: "900", fontSize: 10 },
+gridContent: {
+  paddingBottom: spacing.xl,
+},
+
+gridRow: {
+  justifyContent: "space-between",
+},
 });

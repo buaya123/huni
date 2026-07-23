@@ -1,0 +1,7 @@
+Background Colors: no image — just a hex like #FF7A45.
+
+Background Patterns: 1200×400 PNG/JPG (banner strip) or seamless 512×512 tile.
+
+Profile Borders: 512×512 PNG, transparent center circle diameter ≈380 px (~74% of image) — decoration in outer ring only. No JPG.
+
+Avatar Packs: 512×512 square PNG, focal point in middle 80% of canvas.

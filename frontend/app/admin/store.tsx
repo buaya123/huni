@@ -128,6 +128,8 @@ export default function AdminStore() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [editing, setEditing] = useState<FormState | null>(null);
+  const [deleteItem, setDeleteItem] = useState<StoreItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const isAdmin = user?.role === "admin";
 
@@ -205,15 +207,39 @@ export default function AdminStore() {
     }
   };
 
+  // const removeItem = (item: StoreItem) => {
+  //   Alert.alert("Delete item?", `Remove "${item.name}" from the store?`, [
+  //     { text: "Cancel", style: "cancel" },
+  //     { text: "Delete", style: "destructive", onPress: async () => {
+  //       try { await api.del(`/admin/store/items/${item.id}`); load(); }
+  //       catch (e) { Alert.alert("Error", e instanceof Error ? e.message : "Could not delete"); }
+  //     } },
+  //   ]);
+  // };
   const removeItem = (item: StoreItem) => {
-    Alert.alert("Delete item?", `Remove "${item.name}" from the store?`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-        try { await api.del(`/admin/store/items/${item.id}`); load(); }
-        catch (e) { Alert.alert("Error", e instanceof Error ? e.message : "Could not delete"); }
-      } },
-    ]);
+    setDeleteItem(item);
   };
+
+  const confirmDelete = async () => {
+    if (!deleteItem) return;
+
+    setDeleting(true);
+
+    try {
+        await api.del(`/admin/store/items/${deleteItem.id}`);
+
+        setDeleteItem(null);
+
+        load();
+    } catch (e) {
+        Alert.alert(
+            "Error",
+            e instanceof Error ? e.message : "Could not delete"
+        );
+    } finally {
+        setDeleting(false);
+    }
+};
 
   const toggleEnabled = async (item: StoreItem, v: boolean) => {
     setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, enabled: v } : x)));
@@ -274,45 +300,82 @@ export default function AdminStore() {
             <View key={cat} style={{ gap: spacing.sm }}>
               <Text style={styles.catHeader}>{CATEGORY_LABEL[cat] ?? cat} · {grouped[cat].length}</Text>
               {grouped[cat].map((item) => (
-                <Pressable
+                <View
                   key={item.id}
                   style={styles.itemRow}
-                  onPress={() => setEditing({
-                    id: item.id,
-                    category: item.category,
-                    subcategory: item.subcategory,
-                    name: item.name,
-                    description: item.description || "",
-                    price_tokens: String(item.price_tokens ?? 0),
-                    stock: String(item.stock ?? -1),
-                    enabled: item.enabled,
-                    active_from: item.active_from || "",
-                    active_until: item.active_until || "",
-                    sort_order: String(item.sort_order ?? 0),
-                    image_id: item.image_id ?? null,
-                    hex_color: item.hex_color ?? "",
-                  })}
                   testID={`store-item-${item.id}`}
                 >
-                  <View style={{ flex: 1 }}>
+                  <Pressable
+                    style={{ flex: 1 }}
+                    onPress={() =>
+                      setEditing({
+                        id: item.id,
+                        category: item.category,
+                        subcategory: item.subcategory,
+                        name: item.name,
+                        description: item.description || "",
+                        price_tokens: String(item.price_tokens ?? 0),
+                        stock: String(item.stock ?? -1),
+                        enabled: item.enabled,
+                        active_from: item.active_from || "",
+                        active_until: item.active_until || "",
+                        sort_order: String(item.sort_order ?? 0),
+                        image_id: item.image_id ?? null,
+                        hex_color: item.hex_color ?? "",
+                      })
+                    }
+                  >
                     <Text style={styles.itemName}>{item.name}</Text>
+
                     <Text style={styles.itemMeta} numberOfLines={1}>
-                      {item.subcategory} · {item.price_tokens} tokens · {item.stock < 0 ? "∞" : `${item.stock} stock`}
+                      {item.subcategory} · {item.price_tokens} tokens ·{" "}
+                      {item.stock < 0 ? "∞" : `${item.stock} stock`}
                     </Text>
+
                     {!!item.description && (
-                      <Text style={styles.itemDesc} numberOfLines={2}>{item.description}</Text>
+                      <Text style={styles.itemDesc} numberOfLines={2}>
+                        {item.description}
+                      </Text>
                     )}
-                  </View>
+                  </Pressable>
+                  <View
+                      style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: spacing.sm,
+                      }}
+                  >
+
                   <Switch
                     value={item.enabled}
                     onValueChange={(v) => toggleEnabled(item, v)}
-                    trackColor={{ true: colors.brand, false: colors.surfaceTertiary }}
+                    trackColor={{
+                      true: colors.brand,
+                      false: colors.surfaceTertiary,
+                    }}
                     testID={`toggle-${item.id}`}
                   />
-                  <Pressable onPress={() => removeItem(item)} hitSlop={8} testID={`delete-${item.id}`}>
-                    <Ionicons name="trash-outline" size={20} color={colors.error} />
-                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                        console.log("DELETE PRESSED");
+                        removeItem(item);
+                    }}
+                    hitSlop={8}
+                    style={{
+                        padding: 12,
+                        justifyContent: "center",
+                        alignItems: "center",
+                    }}
+                >
+                    <Ionicons
+                        name="trash-outline"
+                        size={20}
+                        color={colors.error}
+                    />
                 </Pressable>
+                </View>
+                </View>
               ))}
             </View>
           ))}
@@ -481,6 +544,74 @@ export default function AdminStore() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+      <Modal
+    transparent
+    visible={!!deleteItem}
+    animationType="fade"
+    onRequestClose={() => setDeleteItem(null)}
+>
+    <View style={styles.confirmBg}>
+        <View style={styles.confirmCard}>
+
+            <View style={styles.confirmIcon}>
+                <Ionicons
+                    name="trash-outline"
+                    size={30}
+                    color={colors.error}
+                />
+            </View>
+
+            <Text style={styles.confirmTitle}>
+                Delete Item?
+            </Text>
+
+            <Text style={styles.confirmBody}>
+                "{deleteItem?.name}" will be permanently removed from the Huni
+                Store.
+            </Text>
+
+            <Text style={styles.confirmWarning}>
+                This action cannot be undone.
+            </Text>
+
+            <View style={styles.confirmButtons}>
+
+                <Pressable
+                    style={styles.cancelBtn}
+                    onPress={() => setDeleteItem(null)}
+                    disabled={deleting}
+                >
+                    <Text style={styles.cancelText}>
+                        Cancel
+                    </Text>
+                </Pressable>
+
+                <Pressable
+                    style={styles.deleteBtn}
+                    onPress={confirmDelete}
+                    disabled={deleting}
+                >
+                    {deleting ? (
+                        <ActivityIndicator color="#FFF" />
+                    ) : (
+                        <>
+                            <Ionicons
+                                name="trash"
+                                size={16}
+                                color="#FFF"
+                            />
+                            <Text style={styles.deleteText}>
+                                Delete
+                            </Text>
+                        </>
+                    )}
+                </Pressable>
+
+            </View>
+
+        </View>
+    </View>
+</Modal>
     </SafeAreaView>
   );
 }
@@ -508,7 +639,7 @@ const styles = StyleSheet.create({
   itemMeta: { color: colors.muted, fontSize: font.sm, marginTop: 2 },
   itemDesc: { color: colors.onSurfaceTertiary, fontSize: font.sm, marginTop: 2 },
   modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
-  modalCard: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: spacing.lg, gap: spacing.md, maxHeight: "92%" },
+  modalCard: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, gap: spacing.md, maxHeight: "92%" },
   modalHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   modalTitle: { fontWeight: "900", fontSize: font.lg, color: colors.onSurface },
   label: { fontWeight: "800", color: colors.onSurface, fontSize: font.sm },
@@ -532,4 +663,83 @@ const styles = StyleSheet.create({
   uploadBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.brand, paddingVertical: 10, borderRadius: radius.pill },
   uploadBtnText: { color: "#FFFFFF", fontWeight: "800" },
   removeText: { color: colors.error, fontWeight: "700", fontSize: font.sm, textAlign: "center" },
+confirmBg: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+},
+
+confirmCard: {
+    width: "88%",
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    alignItems: "center",
+    gap: spacing.md,
+},
+
+confirmIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: colors.surfaceSecondary,
+    alignItems: "center",
+    justifyContent: "center",
+},
+
+confirmTitle: {
+    fontSize: font.lg,
+    fontWeight: "900",
+    color: colors.onSurface,
+},
+
+confirmBody: {
+    textAlign: "center",
+    color: colors.onSurface,
+},
+
+confirmWarning: {
+    textAlign: "center",
+    color: colors.muted,
+    fontSize: font.sm,
+},
+
+confirmButtons: {
+    flexDirection: "row",
+    width: "100%",
+    gap: spacing.md,
+    marginTop: spacing.sm,
+},
+
+cancelBtn: {
+    flex: 1,
+    backgroundColor: colors.surfaceSecondary,
+    paddingVertical: 13,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+},
+
+cancelText: {
+    color: colors.onSurface,
+    fontWeight: "800",
+},
+
+deleteBtn: {
+    flex: 1,
+    backgroundColor: colors.error,
+    paddingVertical: 13,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+},
+
+deleteText: {
+    color: "#FFF",
+    fontWeight: "800",
+},
 });

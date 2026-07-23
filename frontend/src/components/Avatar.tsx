@@ -20,12 +20,17 @@ export function Avatar({ alias, size = 40, avatarImageId, borderImageId }: Props
   // laid over the outer ring. The avatar stays at `size` centered inside.
   const frameSize = borderImageId ? size * 1.35 : size;
   const avatar = (
-    <View
-      style={[
+<View
+    style={[
         styles.wrap,
-        { width: size, height: size, borderRadius: radius.pill, backgroundColor: bg },
-      ]}
-    >
+        {
+            width: size,
+            height: size,
+            borderRadius: radius.pill,
+            backgroundColor: bg,
+        },
+    ]}
+>
       {avatarImageId ? (
         <Image
           source={{ uri: imageUrl(avatarImageId) }}
@@ -55,7 +60,6 @@ export function Avatar({ alias, size = 40, avatarImageId, borderImageId }: Props
       {/* Border image sits above the avatar. Its center must be transparent so the avatar shows through. */}
       <Image
         source={{ uri: imageUrl(borderImageId) }}
-        pointerEvents="none"
         style={{
           position: "absolute",
           top: 0,
@@ -67,6 +71,7 @@ export function Avatar({ alias, size = 40, avatarImageId, borderImageId }: Props
       />
     </View>
   );
+
 }
 
 const styles = StyleSheet.create({

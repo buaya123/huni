@@ -307,12 +307,9 @@ useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const showSub = Keyboard.addListener(showEvent, () => {
-        setKeyboardVisible(true);
-        // Small delay lets KAV finish resizing before we scroll.
-        requestAnimationFrame(() => {
-            listRef.current?.scrollToEnd({ animated: true });
-        });
-    });
+    setKeyboardVisible(true);
+    scrollToLatest(true);
+});
     const hideSub = Keyboard.addListener(hideEvent, () => {
         setKeyboardVisible(false);
     });

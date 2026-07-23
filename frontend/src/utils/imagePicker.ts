@@ -3,7 +3,11 @@ import * as ImagePicker from "expo-image-picker";
 import { Alert, Linking, Platform } from "react-native";
 import { api } from "@/src/api/client";
 
-export type PickedImage = { uri: string; base64: string };
+export type PickedImage = {
+    uri: string;
+    base64: string;
+    contentType: string;
+};
 
 async function ensureGalleryPermission(): Promise<boolean> {
   if (Platform.OS === "web") return true;
@@ -39,12 +43,24 @@ export async function pickImages(max: number): Promise<PickedImage[]> {
   const out: PickedImage[] = [];
   for (const asset of res.assets.slice(0, max)) {
     const actions = asset.width && asset.width > 1080 ? [{ resize: { width: 1080 } }] : [];
+    const isPng =
+    asset.fileName?.toLowerCase().endsWith(".png") ??
+    asset.mimeType === "image/png";
+
     const m = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-      compress: 0.7,
-      format: ImageManipulator.SaveFormat.JPEG,
-      base64: true,
+        compress: isPng ? 1 : 0.7,
+        format: isPng
+            ? ImageManipulator.SaveFormat.PNG
+            : ImageManipulator.SaveFormat.JPEG,
+        base64: true,
     });
-    if (m.base64) out.push({ uri: m.uri, base64: m.base64 });
+    if (m.base64) {
+      out.push({
+          uri: m.uri,
+          base64: m.base64,
+          contentType: isPng ? "image/png" : "image/jpeg",
+      });
+    }
   }
   return out;
 }
@@ -53,7 +69,7 @@ export async function pickImages(max: number): Promise<PickedImage[]> {
 export async function uploadImages(images: PickedImage[]): Promise<string[]> {
   const ids: string[] = [];
   for (const img of images) {
-    const r = await api.post<{ id: string }>("/uploads", { data: img.base64 });
+    const r = await api.post<{ id: string }>("/uploads", { data: img.base64, content_type: img.contentType });
     ids.push(r.id);
   }
   return ids;

@@ -6,6 +6,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import {
+    getCachedNotifications,
+    saveNotifications,
+} from "@/src/cache/notificationCache";
 
 type Notif = {
   id: string;
@@ -48,17 +52,33 @@ export default function Notifications() {
   const [items, setItems] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    try {
-      const rows = await api.get<Notif[]>("/notifications");
-      setItems(rows);
-      await api.post("/notifications/read-all");
-    } catch {
-      setItems([]);
-    } finally {
+const load = useCallback(async (force = false) => {
+  if (!force) {
+    const cached = await getCachedNotifications();
+
+    if (cached) {
+      setItems(cached.items);
       setLoading(false);
+
+      if (!cached.expired) {
+        return;
+      }
     }
-  }, []);
+  }
+
+  try {
+    const rows = await api.get<Notif[]>("/notifications");
+
+    setItems(rows);
+
+    saveNotifications(rows);
+
+    await api.post("/notifications/read-all");
+  } catch {
+  } finally {
+    setLoading(false);
+  }
+}, []);
 
   useEffect(() => {
     load();

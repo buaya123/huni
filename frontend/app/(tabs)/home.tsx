@@ -15,7 +15,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { PostCard, type Post } from "@/src/components/PostCard";
@@ -44,7 +43,6 @@ export default function Home() {
 
   const [loadingMore, setLoadingMore] = useState(false);
   const listRef = useRef<FlatList<FeedItem>>(null);
-  const firstVisiblePostId = useRef<string | null>(null);
   const firstVisiblePost = useRef<
       Record<(typeof TABS)[number]["key"], string | null>
   >({
@@ -57,26 +55,6 @@ export default function Home() {
       itemVisiblePercentThreshold: 50,
   });
 
-//   const onViewableItemsChanged = useRef(
-//     ({ viewableItems }: any) => {
-
-//         const firstPost = viewableItems.find(
-//             (v: any) =>
-//                 v.item.type !== "ad"
-//         );
-
-//         if (firstPost) {
-
-//             firstVisiblePostId.current = firstPost.item.id;
-//                 console.log(
-//                     "FIRST VISIBLE:",
-//                     firstVisiblePostId.current
-//                 );
-
-//         }
-
-//     }
-// );
 const onViewableItemsChanged = useRef(
     ({ viewableItems }: any) => {
 

@@ -3,16 +3,12 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import { UserRepository } from "@/src/repositories/UserRepository";
 import { useAuth } from "@/src/context/auth";
 import { Avatar } from "@/src/components/Avatar";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
-type BlockRow = {
-  id: string;
-  user: { id: string; alias: string };
-  created_at: string;
-};
+import type { BlockRow } from "@/src/types/user";
 
 export default function Settings() {
   const router = useRouter();
@@ -22,7 +18,7 @@ export default function Settings() {
 
   const load = useCallback(async () => {
     try {
-      const rows = await api.get<BlockRow[]>("/block");
+      const rows = await UserRepository.getBlockedUsers();
       setBlocks(rows);
     } catch {
       setBlocks([]);
@@ -35,7 +31,7 @@ export default function Settings() {
 
   const unblock = async (targetId: string) => {
     try {
-      await api.del(`/block/${targetId}`);
+      await UserRepository.unblock(targetId);
       setBlocks((prev) => prev.filter((b) => b.user.id !== targetId));
     } catch {
       // ignore

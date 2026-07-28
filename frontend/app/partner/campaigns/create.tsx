@@ -3,9 +3,9 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, Sc
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
+import { PartnerRepository } from "@/src/repositories/PartnerRepository";
 
 export default function CreateCampaign() {
   const router = useRouter();
@@ -52,7 +52,7 @@ const scrollToField = (name: string) => {
     }
     setSaving(true);
     try {
-      await api.post("/partner/campaigns", {
+      await PartnerRepository.createCampaign({
         title: title.trim(),
         description: description.trim(),
         discount_label: discountLabel.trim(),

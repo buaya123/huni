@@ -11,22 +11,13 @@ import {
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { AdsRepository } from "@/src/repositories/AdsRepository";
+import type {
+    Analytics,
+    UpdateAdRequest,
+} from "@/src/types/ad";
 
-type Analytics = {
-  ad: {
-    id: string;
-    business_name: string;
-    title: string;
-    enabled: boolean;
-    comments_enabled: boolean;
-    frequency_weight: number;
-  };
-  totals: { impressions: number; clicks: number; unique_viewers: number; ctr: number };
-  daily: { date: string; impressions: number; clicks: number }[];
-  recent_clicks: string[];
-};
 
 export default function AdAnalytics() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -37,7 +28,7 @@ export default function AdAnalytics() {
 
   const load = useCallback(async () => {
     try {
-      const d = await api.get<Analytics>(`/ads/${id}/analytics`);
+      const d = await AdsRepository.getAnalytics(id);
       setData(d);
     } catch {
       // ignore
@@ -48,9 +39,11 @@ export default function AdAnalytics() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const patch = async (body: Record<string, unknown>) => {
+  const patch = async (
+    body: UpdateAdRequest,
+) => {
     try {
-      await api.patch(`/ads/${id}`, body);
+      await AdsRepository.update(id, body);
       setData((prev) => (prev ? { ...prev, ad: { ...prev.ad, ...body } } : prev));
     } catch { /* ignore */ }
   };
@@ -61,7 +54,7 @@ export default function AdAnalytics() {
       return;
     }
     try {
-      await api.del(`/ads/${id}`);
+      await AdsRepository.delete(id);
       router.replace("/ads");
     } catch { /* ignore */ }
   };

@@ -2,18 +2,11 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api } from "@/src/api/client";
+import { ChatRepository } from "@/src/repositories/ChatRepository";
 import { Avatar } from "@/src/components/Avatar";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
-
-type Conv = {
-  id: string;
-  other: { id: string; alias: string };
-  last_message: string | null;
-  last_message_at: string | null;
-  unread: number;
-};
+import type { Conv } from "@/src/types/chat";
 
 function timeAgo(iso: string | null) {
   if (!iso) return "";
@@ -30,16 +23,16 @@ export default function Messages() {
   const [items, setItems] = useState<Conv[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+const load = useCallback(async () => {
     try {
-      const rows = await api.get<Conv[]>("/chat/conversations");
-      setItems(rows);
+        const rows = await ChatRepository.getConversations();
+        setItems(rows);
     } catch {
-      setItems([]);
+        setItems([]);
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }, []);
+}, []);
 
   useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));

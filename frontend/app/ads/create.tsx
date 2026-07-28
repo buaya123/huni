@@ -14,7 +14,8 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { api } from "@/src/api/client";
+import { AdsRepository } from "@/src/repositories/AdsRepository";
+import type { CreateAdRequest } from "@/src/types/ad";
 import { pickImages, uploadImages, type PickedImage } from "@/src/utils/imagePicker";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
@@ -51,7 +52,7 @@ export default function CreateAd() {
     setError(null);
     setLoading(true);
     try {
-      const body: Record<string, unknown> = {
+      const body: CreateAdRequest = {
         business_name: businessName.trim(),
         title: title.trim(),
         content: content.trim(),
@@ -59,7 +60,7 @@ export default function CreateAd() {
       };
       if (linkUrl.trim()) body.link_url = linkUrl.trim();
       if (images.length > 0) body.image_ids = await uploadImages(images);
-      await api.post("/ads", body);
+      await AdsRepository.create(body);
       router.replace("/ads");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create ad.");

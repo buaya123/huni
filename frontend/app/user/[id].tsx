@@ -3,28 +3,19 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api, imageUrl } from "@/src/api/client";
+import { imageUrl, api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { Avatar } from "@/src/components/Avatar";
 import { PostCard, type Post } from "@/src/components/PostCard";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { UserRepository } from "@/src/repositories/UserRepository"
+import { ChatRepository } from "@/src/repositories/ChatRepository";
 
-type Profile = {
-  id: string;
-  alias: string;
-  helpful_score: number;
-  post_count: number;
-  comment_count: number;
-  bio: string;
-  joined_at: string;
-  exp?: number;
-  points?: number;
-  tokens?: number;
-  rank_level?: number;
-  rank_title?: string;
-};
+import type {
+    Profile,
+    EquippedStyles,
+} from "@/src/types/user";
 
-type EquippedStyles = Record<string, { item_id: string; image_id: string | null; hex_color: string | null; name: string } | null>;
 
 export default function UserProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,9 +29,9 @@ export default function UserProfile() {
   const load = useCallback(async () => {
     try {
       const [u, ps, equ] = await Promise.all([
-        api.get<Profile>(`/users/${id}`),
-        api.get<Post[]>(`/users/${id}/posts`),
-        api.get<EquippedStyles>(`/users/${id}/equipped_styles`).catch(() => ({} as EquippedStyles)),
+        UserRepository.get(id),
+        UserRepository.getPosts(id),
+        UserRepository.getEquippedStyles(id),
       ]);
       setProfile(u);
       setPosts(ps);
@@ -57,8 +48,10 @@ export default function UserProfile() {
   const startChat = async () => {
     if (!profile) return;
     try {
-      const c = await api.post<{ id: string }>("/chat/start", { other_user_id: profile.id });
-      router.push(`/chat/${c.id}?alias=${encodeURIComponent(profile.alias)}&userId=${profile.id}`);
+    const c = await ChatRepository.start(
+    profile.id,
+);
+router.push(`/chat/${c.id}?alias=${encodeURIComponent(profile.alias)}&userId=${profile.id}`);
     } catch {
       // ignore
     }
@@ -67,7 +60,7 @@ export default function UserProfile() {
   const doBlock = async () => {
     if (!profile) return;
     try {
-      await api.post("/block", { target_user_id: profile.id });
+      await UserRepository.block(profile.id);
       router.back();
     } catch { /* ignore */ }
   };

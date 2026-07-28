@@ -19,6 +19,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { api } from "@/src/api/client";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { Avatar } from "@/src/components/Avatar";
+import { PartnerRepository } from "@/src/repositories/PartnerRepository"
 
 type Campaign = {
   id: string;
@@ -75,8 +76,8 @@ export default function PartnerScan() {
 
     if (scannerMode) {
 
-      await api.post("/partner/scanners", {
-        user_id: code.replace("huni:user:", ""),
+      await PartnerRepository.addScanner({
+          user_id: code.replace("huni:user:", ""),
       });
 
       Alert.alert(
@@ -147,7 +148,11 @@ const rescan = () => {
     if (!result || redeeming) return;
     setRedeeming(c.id);
     try {
-      await api.post("/partner/redeem",{campaign_id:c.id,user_id:result.user.id,partner_id,},);
+      await PartnerRepository.redeem({
+          campaign_id: c.id,
+          user_id: result.user.id,
+          partner_id,
+      });
       Alert.alert(
           "Success",
           `${c.title} applied successfully.`,

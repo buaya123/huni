@@ -17,29 +17,18 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api, imageUrl } from "@/src/api/client";
+import { imageUrl } from "@/src/api/client";
+import { AdminStoreRepository } from "@/src/repositories/AdminStoreRepository";
 import { useAuth } from "@/src/context/auth";
 import { pickImages, uploadImages } from "@/src/utils/imagePicker";
+import type { CreateStoreItemRequest } from "@/src/types/store";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import type {
+    StoreItem,
+    CategoryDef,
+    CategoriesResponse,
+} from "@/src/types/store";
 
-type StoreItem = {
-  id: string;
-  category: string;
-  subcategory: string;
-  name: string;
-  description: string;
-  price_tokens: number;
-  stock: number;
-  enabled: boolean;
-  active_from?: string | null;
-  active_until?: string | null;
-  sort_order: number;
-  image_id?: string | null;
-  hex_color?: string | null;
-};
-
-type CategoryDef = { id: string; label: string; icon: string };
-type CategoriesResp = { categories: Record<string, CategoryDef[]> };
 
 const CATEGORY_LABEL: Record<string, string> = {
   appearance: "Appearance",
@@ -136,8 +125,8 @@ export default function AdminStore() {
   const load = useCallback(async () => {
     try {
       const [cats, rows] = await Promise.all([
-        api.get<CategoriesResp>("/store/categories"),
-        api.get<StoreItem[]>("/admin/store/items"),
+          AdminStoreRepository.getCategories(),
+          AdminStoreRepository.getItems(),
       ]);
       setCategories(cats.categories);
       setItems(rows);
@@ -179,24 +168,24 @@ export default function AdminStore() {
     }
     setSaving(true);
     try {
-      const payload = {
-        category: editing.category,
-        subcategory: editing.subcategory,
-        name: editing.name.trim(),
-        description: editing.description.trim(),
-        price_tokens: Number(editing.price_tokens) || 0,
-        stock: Number(editing.stock) || -1,
-        enabled: editing.enabled,
-        active_from: editing.active_from.trim() || null,
-        active_until: editing.active_until.trim() || null,
-        sort_order: Number(editing.sort_order) || 0,
-        image_id: editing.image_id,
-        hex_color: editing.hex_color.trim() ? editing.hex_color.trim() : null,
-      };
+      const payload: CreateStoreItemRequest = {
+      category: editing.category,
+      subcategory: editing.subcategory,
+      name: editing.name.trim(),
+      description: editing.description.trim(),
+      price_tokens: Number(editing.price_tokens) || 0,
+      stock: Number(editing.stock) || -1,
+      enabled: editing.enabled,
+      active_from: editing.active_from.trim() || null,
+      active_until: editing.active_until.trim() || null,
+      sort_order: Number(editing.sort_order) || 0,
+      image_id: editing.image_id,
+      hex_color: editing.hex_color.trim() || null,
+  };
       if (editing.id) {
-        await api.patch(`/admin/store/items/${editing.id}`, payload);
+          await AdminStoreRepository.update(editing.id, payload);
       } else {
-        await api.post("/admin/store/items", payload);
+          await AdminStoreRepository.create(payload);
       }
       setEditing(null);
       load();
@@ -226,7 +215,7 @@ export default function AdminStore() {
     setDeleting(true);
 
     try {
-        await api.del(`/admin/store/items/${deleteItem.id}`);
+        await AdminStoreRepository.delete(deleteItem.id);
 
         setDeleteItem(null);
 
@@ -243,7 +232,9 @@ export default function AdminStore() {
 
   const toggleEnabled = async (item: StoreItem, v: boolean) => {
     setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, enabled: v } : x)));
-    try { await api.patch(`/admin/store/items/${item.id}`, { enabled: v }); }
+    try { await AdminStoreRepository.update(item.id, {
+    enabled: v,
+}); }
     catch { setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, enabled: !v } : x))); }
   };
 

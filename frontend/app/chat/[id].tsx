@@ -15,20 +15,17 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import { ChatRepository } from "@/src/repositories/ChatRepository";
 import { useAuth } from "@/src/context/auth";
 import { useWS } from "@/src/context/ws";
 import { Avatar } from "@/src/components/Avatar";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
-
-type Message = {
-  id: string;
-  conversation_id: string;
-  sender_id: string;
-  sender_alias: string;
-  content: string;
-  created_at: string;
-};
+import type {
+    Message,
+    ConversationStatus,
+} from "@/src/types/chat";
+import { UserRepository } from "@/src/repositories/UserRepository";
+import { ReportRepository } from "@/src/repositories/ReportRepository";
 
 type ChatRow =
     | {
@@ -42,11 +39,6 @@ type ChatRow =
           message: Message;
       };
 
-type ConversationStatus = {
-  blocked: boolean;
-  blocked_by_me: boolean;
-  blocked_by_other: boolean;
-};
 
 function formatTime(date: string) {
 
@@ -196,13 +188,13 @@ const load = useCallback(async () => {
     try {
 
         const [rows, conversationStatus] = await Promise.all([
-            api.get<Message[]>(
-                `/chat/${id}/messages?offset=0&limit=${PAGE_SIZE}`
-            ),
-            api.get<ConversationStatus>(
-                `/chat/${id}/status`
-            ),
-        ]);
+    ChatRepository.getMessages(
+        id,
+        0,
+        PAGE_SIZE,
+    ),
+    ChatRepository.getStatus(id),
+]);
 
         console.log("ROWS:", rows.length);
 
@@ -246,9 +238,11 @@ const loadOlder = useCallback(async () => {
 
         setLoadingOlder(true);
 
-        const rows = await api.get<Message[]>(
-            `/chat/${id}/messages?offset=${offset}&limit=${PAGE_SIZE}`
-        );
+        const rows = await ChatRepository.getMessages(
+    id,
+    offset,
+    PAGE_SIZE,
+);
 
         if (rows.length === 0) {
 
@@ -346,10 +340,10 @@ const scrollToLatest = (animated = false) => {
     const tmp = text.trim();
     setText("");
     try {
-          const msg = await api.post<Message>(
-        `/chat/${id}/messages`,
-        { content: tmp }
-    );
+        const msg = await ChatRepository.sendMessage(
+    id,
+    tmp,
+);
 
     setMessages(prev => {
     const next = prev.some(m => m.id === msg.id)
@@ -373,7 +367,7 @@ const scrollToLatest = (animated = false) => {
     setShowActions(false);
     if (!userId) return;
     try {
-      await api.post("/block", { target_user_id: userId });
+      await UserRepository.block(userId);
       router.back();
     } catch {
       // ignore
@@ -384,7 +378,11 @@ const scrollToLatest = (animated = false) => {
     setShowActions(false);
     if (!userId) return;
     try {
-      await api.post("/report", { target_type: "user", target_id: userId, reason: "Reported from chat" });
+      await ReportRepository.report(
+    "user",
+    userId,
+    "Reported from chat",
+);
     } catch {
       // ignore
     }

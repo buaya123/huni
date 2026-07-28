@@ -5,17 +5,13 @@ import {
     CachePolicy,
     CacheStrategy,
 } from "../cache";
-
+import type { Notification } from "@/src/models/Notification";
 // Replace this with your real notification type later
-export interface Notification {
-    id: string;
-    title: string;
-    body: string;
-}
+
 
 export class NotificationsRepository {
 
-    static async list() {
+    static async list(): Promise<Notification[]> {
 
         return Cache.get<Notification[]>(
 
@@ -65,5 +61,14 @@ export class NotificationsRepository {
         );
 
     }
+
+    static async markAllRead(): Promise<void> {
+
+    await api.post("/notifications/read-all");
+
+    await this.refresh();
+
+}
+
 
 }

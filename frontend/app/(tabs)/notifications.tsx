@@ -3,26 +3,10 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import { NotificationsRepository } from "@/src/repositories/NotificationsRepository";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
-import {
-    getCachedNotifications,
-    saveNotifications,
-} from "@/src/cache/notificationCache";
-
-type Notif = {
-  id: string;
-  type: string;
-  actor_alias?: string;
-  content_preview?: string;
-  post_id?: string;
-  is_ad?: boolean;
-  conversation_id?: string;
-  campaign_id?: string;
-  created_at: string;
-  read: boolean;
-};
+import type { Notification } from "@/src/models/Notification";
 
 function typeMeta(t: string) {
   switch (t) {
@@ -49,44 +33,43 @@ function timeAgo(iso: string) {
 
 export default function Notifications() {
   const router = useRouter();
-  const [items, setItems] = useState<Notif[]>([]);
+  const [items, setItems] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
-const load = useCallback(async (force = false) => {
-  if (!force) {
-    const cached = await getCachedNotifications();
+const load = useCallback(async () => {
 
-    if (cached) {
-      setItems(cached.items);
-      setLoading(false);
+    try {
 
-      if (!cached.expired) {
-        return;
-      }
+        const rows = await NotificationsRepository.list();
+
+        setItems(rows);
+
+    } finally {
+
+        setLoading(false);
+
     }
-  }
 
-  try {
-    const rows = await api.get<Notif[]>("/notifications");
-
-    setItems(rows);
-
-    saveNotifications(rows);
-
-    await api.post("/notifications/read-all");
-  } catch {
-  } finally {
-    setLoading(false);
-  }
 }, []);
 
-  useEffect(() => {
+useEffect(() => {
+
     load();
-  }, [load]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+    const unsubscribe =
+        NotificationsRepository.subscribe(setItems);
 
-  const open = (n: Notif) => {
+    return unsubscribe;
+
+}, [load]);
+
+useFocusEffect(
+    useCallback(() => {
+        load();
+    }, [load])
+);
+
+  const open = (n: Notification) => {
     if (n.type === "reward" && n.campaign_id) {
       // user got points/discount → open their rewards screen
       router.push("/rewards");

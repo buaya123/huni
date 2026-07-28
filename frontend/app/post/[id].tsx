@@ -8,6 +8,9 @@ import { useAuth } from "@/src/context/auth";
 import { PostCard, type Post } from "@/src/components/PostCard";
 import { CommentsSection } from "@/src/components/CommentsSection";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { ReportRepository } from "@/src/repositories/ReportRepository";
+import { UserRepository } from "@/src/repositories/UserRepository";
+import { PostRepository } from "@/src/repositories/PostRepository";
 
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,7 +36,11 @@ export default function PostDetail() {
   const doReport = async () => {
     setShowActions(false);
     try {
-      await api.post(`/report`, { target_type: "post", target_id: id, reason: "Reported from post" });
+      await ReportRepository.report(
+    "post",
+    id,
+    "Reported from post",
+);
     } catch { /* ignore */ }
   };
 
@@ -41,7 +48,9 @@ export default function PostDetail() {
     setShowActions(false);
     if (!post) return;
     try {
-      await api.post(`/block`, { target_user_id: post.author.id });
+      await UserRepository.block(
+    post.author.id,
+);
       router.back();
     } catch { /* ignore */ }
   };
@@ -49,7 +58,7 @@ export default function PostDetail() {
   const doDelete = async () => {
     setShowActions(false);
     try {
-      await api.del(`/posts/${id}`);
+      await PostRepository.delete(id);
       router.back();
     } catch { /* ignore */ }
   };
@@ -118,7 +127,10 @@ export default function PostDetail() {
         header={
             <PostCard
                 post={post}
-                onChange={setPost}
+                onChange={(updated) => {
+    console.log("DETAIL RECEIVED", updated);
+    setPost(updated);
+}}
                 onPress={() => {}}
                 mode="detail"
             />

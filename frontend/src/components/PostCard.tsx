@@ -6,7 +6,7 @@ import { colors, font, radius, REACTIONS, shadow, spacing } from "@/src/theme/to
 import { Avatar } from "./Avatar";
 import { MoodChip } from "./MoodChip";
 import { PostImages } from "./PostImages";
-import { api } from "@/src/api/client";
+import { PostRepository } from "@/src/repositories/PostRepository";
 
 export type PostAuthor = {
   id: string;
@@ -66,26 +66,41 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
 
   const react = async (kind: string) => {
     try {
-      const updated = await api.post<Post>(`/posts/${post.id}/react`, { kind });
-      onChange?.(updated);
-    } catch { /* ignore */ }
-  };
 
-  const votePulse = async (idx: number) => {
+        const updated = await PostRepository.react(post.id, kind);
+
+console.log("UPDATED POST", updated);
+console.log("CALLING onChange");
+
+onChange?.(updated);
+
+    } catch {
+        // ignore
+    }
+};
+
+const votePulse = async (idx: number) => {
     try {
-      const updated = await api.post<Post>(`/posts/${post.id}/pulse-vote`, { option_index: idx });
-      onChange?.(updated);
-    } catch { /* ignore */ }
-  };
+
+        const updated =
+            await PostRepository.votePulse(
+                post.id,
+                idx,
+            );
+
+        onChange?.(updated);
+
+    } catch {
+        // ignore
+    }
+};
 
   const toggleBookmark = async () => {
     try {
-      const r = await api.post<{ is_bookmarked: boolean }>(`/posts/${post.id}/bookmark`);
-      onChange?.({
-        ...post,
-        is_bookmarked: r.is_bookmarked,
-        bookmark_count: (post.bookmark_count ?? 0) + (r.is_bookmarked ? 1 : -1),
-      });
+      const updated =
+      await PostRepository.toggleBookmark(post);
+
+      onChange?.(updated);
     } catch { /* ignore */ }
   };
 

@@ -16,12 +16,12 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api } from "@/src/api/client";
 import { PostCard, type Post } from "@/src/components/PostCard";
 import { AdCard, type Ad } from "@/src/components/AdCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { FeedSkeleton } from "@/src/components/FeedSkeleton";
+import { FeedRepository } from "@/src/repositories/FeedRespository"
 
 const PAGE_SIZE = 5;
 
@@ -110,21 +110,15 @@ const load = useCallback(async () => {
 
     try {
 
-        const rows = await api.get<FeedItem[]>(
-            `/posts?tab=${tab}&offset=0&limit=${PAGE_SIZE}`
-        );
-        const postCount = rows.filter(
-            r => r.type !== "ad"
-        ).length;
+        const feed =
+            await FeedRepository.load<FeedItem>(
+                tab,
+                PAGE_SIZE,
+            );
 
         setFeeds(prev => ({
             ...prev,
-            [tab]: {
-                posts: rows,
-                offset: postCount,
-                hasMore: postCount >= PAGE_SIZE,
-                lastFetched: Date.now(),
-            },
+            [tab]: feed,
         }));
 
     } catch {
@@ -162,50 +156,15 @@ const loadMore = useCallback(async () => {
 
         setLoadingMore(true);
 
-        const rows = await api.get<FeedItem[]>(
-            `/posts?tab=${tab}&offset=${currentFeed.offset}&limit=${PAGE_SIZE}`
-        );
-
-        if (rows.length === 0) {
-
-            setFeeds(prev => ({
-                ...prev,
-                [tab]: {
-                    ...prev[tab],
-                    hasMore: false,
-                },
-            }));
-
-            return;
-
-        }
-
-        const postCount = rows.filter(
-            r => r.type !== "ad"
-        ).length;
-
-        const merged = [
-            ...currentFeed.posts,
-            ...rows,
-        ];
-
-        const unique = Array.from(
-            new Map(
-                merged.map(item => [item.id, item])
-            ).values()
+        const nextFeed = await FeedRepository.loadMore<FeedItem>(
+            tab,
+            currentFeed,
+            PAGE_SIZE,
         );
 
         setFeeds(prev => ({
             ...prev,
-            [tab]: {
-                ...prev[tab],
-                posts: unique,
-                offset:
-                    prev[tab].offset +
-                    postCount,
-                hasMore:
-                    postCount >= PAGE_SIZE,
-            },
+            [tab]: nextFeed,
         }));
 
     } finally {
@@ -372,7 +331,8 @@ const duplicateIds = ids.filter(
 
         <PostCard
             post={item as Post}
-            onChange={(updated) =>
+            onChange={(updated) =>{
+                console.log("FEED RECEIVED", updated);
                 setFeeds(prev => ({
     ...prev,
     [tab]: {
@@ -385,7 +345,7 @@ const duplicateIds = ids.filter(
         ),
     },
 }))
-            }
+            }}
         />
 
     );

@@ -3,19 +3,12 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Switch, Text, View 
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import { AdsRepository } from "@/src/repositories/AdsRepository";
+import type { AdRow } from "@/src/types/ad";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
-type AdRow = {
-  id: string;
-  business_name: string;
-  title: string;
-  enabled: boolean;
-  comments_enabled: boolean;
-  frequency_weight: number;
-  stats: { impressions: number; clicks: number; unique_viewers: number; ctr: number };
-};
+
 
 export default function AdManager() {
   const router = useRouter();
@@ -24,7 +17,7 @@ export default function AdManager() {
 
   const load = useCallback(async () => {
     try {
-      const rows = await api.get<AdRow[]>("/ads/mine");
+      const rows = await AdsRepository.getMine();
       setAds(rows);
     } catch {
       setAds([]);
@@ -38,7 +31,9 @@ export default function AdManager() {
   const toggleEnabled = async (ad: AdRow, value: boolean) => {
     setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, enabled: value } : a)));
     try {
-      await api.patch(`/ads/${ad.id}`, { enabled: value });
+      await AdsRepository.update(ad.id, {
+    enabled: value,
+});
     } catch {
       setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, enabled: !value } : a)));
     }

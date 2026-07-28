@@ -17,8 +17,16 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
+import { AdminUsersRepository } from "@/src/repositories/AdminUsersRepository";
 import { useAuth } from "@/src/context/auth";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import type {
+    AdminUser,
+    AdminCampaign,
+} from "@/src/types/admin";
+import { AdminSettingsRepository } from "@/src/repositories/AdminSettingsRepository";
+import { AdminCampaignRepository } from "@/src/repositories/AdminCampaignRepository";
+import { AdsRepository } from "@/src/repositories/AdsRepository";
 
 function rewardSummary(c: { exp_per_redemption?: number; tokens_per_redemption?: number; discount_label?: string }): string {
   const parts: string[] = [];
@@ -37,14 +45,7 @@ function ReviewField({ label, value, error }: { label: string; value: string; er
   );
 }
 
-type AdminUser = {
-  id: string;
-  alias: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  role: "user" | "advertiser" | "partner" | "admin";
-};
+
 
 type AdminAd = {
   id: string;
@@ -56,30 +57,6 @@ type AdminAd = {
   advertiser?: { alias: string; email: string } | null;
 };
 
-type AdminCampaign = {
-  id: string;
-  title: string;
-  description: string;
-  discount_label: string;
-  terms?: string;
-  start_date?: string | null;
-  end_date?: string | null;
-  status: string;
-  state: string;
-  redemption_count: number;
-  exp_per_redemption: number;
-  tokens_per_redemption: number;
-  budget_exp: number;
-  budget_tokens: number;
-  remaining_exp: number;
-  remaining_tokens: number;
-  created_at?: string;
-  rejected_reason?: string | null;
-  // Legacy (still in API for backwards compat but unused)
-  reward_type?: string;
-  points_amount?: number;
-  partner: { id: string; alias: string; business_name: string; business_type: string } | null;
-};
 
 export default function AdminPanel() {
   const router = useRouter();
@@ -106,9 +83,9 @@ export default function AdminPanel() {
   const load = useCallback(async () => {
     try {
       const [s, allAds, allCamps] = await Promise.all([
-        api.get<{ ad_every_n_posts: number }>("/admin/settings"),
-        api.get<AdminAd[]>("/admin/ads"),
-        api.get<AdminCampaign[]>("/admin/campaigns"),
+          AdminSettingsRepository.get(),
+          AdsRepository.getAll(),
+          AdminCampaignRepository.getAll()
       ]);
       setEveryN(s.ad_every_n_posts);
       setAds(allAds);
@@ -123,7 +100,9 @@ export default function AdminPanel() {
   const search = async () => {
     setSearching(true);
     try {
-      const rows = await api.get<AdminUser[]>(`/admin/users?q=${encodeURIComponent(query.trim())}`);
+      const rows = await AdminUsersRepository.search(
+    query.trim()
+);
       setUsers(rows);
     } catch {
       setUsers([]);
@@ -138,7 +117,10 @@ export default function AdminPanel() {
       return;
     }
     try {
-      await api.post(`/admin/users/${u.id}/role`, { role });
+      await AdminUsersRepository.updateRole(
+    u.id,
+    { role }
+);
       setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role } : x)));
     } catch { /* ignore */ }
   };
@@ -146,11 +128,14 @@ export default function AdminPanel() {
   const confirmPartnerPromotion = async () => {
     if (!promotePartner) return;
     try {
-      await api.post(`/admin/users/${promotePartner.userId}/role`, {
+      await AdminUsersRepository.updateRole(
+    promotePartner.userId,
+    {
         role: "partner",
         business_name: promotePartner.businessName.trim(),
         business_type: promotePartner.businessType.trim(),
-      });
+    }
+);
       setUsers((prev) => prev.map((x) => (x.id === promotePartner.userId ? { ...x, role: "partner" } : x)));
       setPromotePartner(null);
     } catch { /* ignore */ }
@@ -174,11 +159,11 @@ export default function AdminPanel() {
     if (tokPer > 0 && tokBudget < tokPer) { Alert.alert("Invalid", "Token budget must be at least the per-person token amount."); return; }
     setApprovalSubmitting(true);
     try {
-      await api.post(`/admin/campaigns/${approving.id}/approve`, {
-        exp_per_redemption: expPer,
-        tokens_per_redemption: tokPer,
-        budget_exp: expBudget,
-        budget_tokens: tokBudget,
+      await AdminCampaignRepository.approve(approving.id, {
+          exp_per_redemption: expPer,
+          tokens_per_redemption: tokPer,
+          budget_exp: expBudget,
+          budget_tokens: tokBudget,
       });
       setCampaigns((prev) => prev.map((x) => (x.id === approving.id ? {
         ...x,
@@ -203,7 +188,9 @@ export default function AdminPanel() {
   const submitReject = async () => {
     if (!rejectingId) return;
     try {
-      await api.post(`/admin/campaigns/${rejectingId}/reject`, { reason: rejectReason.trim() });
+      await AdminCampaignRepository.reject(rejectingId, {
+          reason: rejectReason.trim(),
+      });
       setCampaigns((prev) => prev.map((x) => (x.id === rejectingId ? { ...x, status: "rejected", state: "rejected", rejected_reason: rejectReason.trim() } : x)));
       setReviewCampaign((r) => (r && r.id === rejectingId ? { ...r, status: "rejected", state: "rejected", rejected_reason: rejectReason.trim() } : r));
       setRejectingId(null);
@@ -217,14 +204,18 @@ export default function AdminPanel() {
     const clamped = Math.min(20, Math.max(2, val));
     setEveryN(clamped);
     try {
-      await api.patch("/admin/settings", { ad_every_n_posts: clamped });
+      await AdminSettingsRepository.update({
+    ad_every_n_posts: clamped,
+});
     } catch { /* ignore */ }
   };
 
   const toggleAd = async (ad: AdminAd, value: boolean) => {
     setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, enabled: value } : a)));
     try {
-      await api.patch(`/ads/${ad.id}`, { enabled: value });
+      await AdsRepository.update(ad.id, {
+          enabled: value,
+      });
     } catch {
       setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, enabled: !value } : a)));
     }

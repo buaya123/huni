@@ -6,6 +6,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import type { Campaign } from "../../perks/index";
+import {PartnerRepository} from "@/src/repositories/PartnerRepository"
+
 
 export default function CampaignDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -14,7 +16,7 @@ export default function CampaignDetail() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    try { setC(await api.get<Campaign>(`/partner/campaigns/${id}`)); }
+    try { setC(await PartnerRepository.getCampaign(id)); }
     catch { setC(null); } finally { setLoading(false); }
   }, [id]);
 
@@ -23,7 +25,10 @@ export default function CampaignDetail() {
   const toggleEnabled = async (v: boolean) => {
     if (!c) return;
     setC({ ...c, enabled: v });
-    try { await api.patch(`/partner/campaigns/${c.id}`, { enabled: v }); load(); }
+    try { await PartnerRepository.updateCampaign(
+    c.id,
+    { enabled: v }
+); load(); }
     catch { setC({ ...c, enabled: !v }); }
   };
 
@@ -32,7 +37,7 @@ export default function CampaignDetail() {
     Alert.alert("Delete campaign?", "This cannot be undone.", [
       { text: "Cancel", style: "cancel" },
       { text: "Delete", style: "destructive", onPress: async () => {
-        try { await api.del(`/partner/campaigns/${c.id}`); router.replace("/partner"); }
+        try { await PartnerRepository.deleteCampaign(c.id); router.replace("/partner"); }
         catch (e) { Alert.alert("Error", e instanceof Error ? e.message : "Could not delete"); }
       } },
     ]);

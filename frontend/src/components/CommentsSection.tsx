@@ -14,7 +14,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { api, imageUrl } from "@/src/api/client";
+import { imageUrl } from "@/src/api/client";
+import { CommentRepository } from "@/src/repositories/CommentRepository";
 import { Avatar } from "@/src/components/Avatar";
 import { ImageViewer } from "@/src/components/PostImages";
 import { pickImages, uploadImages, type PickedImage } from "@/src/utils/imagePicker";
@@ -111,7 +112,9 @@ type Props = {
 };
 
 export function CommentsSection({ targetId, header, commentsEnabled = true, canModerate = false, onCountChange }: Props) {
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [state, setState] = useState(
+    CommentRepository.initialState()
+);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<Comment | null>(null);
@@ -122,6 +125,8 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
   const inputRef = React.useRef<TextInput>(null);
   const [composerHeight, setComposerHeight] = useState(0);
   const keyboardOffset = React.useRef(new Animated.Value(0)).current;
+
+  const comments = state.comments;
 
   const router = useRouter();
 
@@ -138,8 +143,11 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
 
   const load = useCallback(async () => {
     try {
-      const cs = await api.get<Comment[]>(`/posts/${targetId}/comments`);
-      setComments(cs);
+      const cs = await CommentRepository.getByPost(targetId);
+      setState(prev => ({
+    ...prev,
+    comments: cs,
+}));
     } catch {
       // ignore
     }
@@ -154,8 +162,13 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
       const body: Record<string, unknown> = { content: text.trim() };
       if (replyTo) body.parent_comment_id = replyTo.id;
       if (pendingImages.length > 0) body.image_ids = await uploadImages(pendingImages);
-      const c = await api.post<Comment>(`/posts/${targetId}/comments`, body);
-      setComments((prev) => [...prev, c]);
+      const c = await CommentRepository.create(
+    targetId,
+    body,
+);
+      setState(prev =>
+    CommentRepository.add(prev, c)
+);
       setText("");
       setReplyTo(null);
       setPendingImages([]);
@@ -185,17 +198,22 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
 
   const react = async (item: Comment, kind: "up" | "down") => {
     try {
-      const updated = await api.post<Comment>(`/comments/${item.id}/react`, { kind });
-      setComments((prev) =>
-        prev.map((x) => (x.id === updated.id ? { ...x, up: updated.up, down: updated.down, my_reaction: updated.my_reaction } : x))
-      );
+      const updated = await CommentRepository.react(
+    item.id,
+    kind,
+);
+      setState(prev =>
+    CommentRepository.replace(prev, updated)
+);
     } catch { /* ignore */ }
   };
 
   const removeComment = async (item: Comment) => {
     try {
-      await api.del(`/comments/${item.id}`);
-      setComments((prev) => prev.filter((x) => x.id !== item.id));
+      await CommentRepository.remove(item.id);
+      setState(prev =>
+    CommentRepository.removeLocal(prev, item.id)
+);
       onCountChange?.(-1);
     } catch { /* ignore */ }
   };

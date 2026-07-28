@@ -76,9 +76,26 @@ export class Cache {
         }
     }
 
+    static async refresh<T>(
+        key: string,
+        fetcher: () => Promise<T>,
+    ): Promise<T> {
+
+        return this.fetchAndStore(
+            key,
+            fetcher,
+        );
+
+    }
+
     static async invalidate(key: string) {
+
         MemoryCache.remove(key);
+
         await DiskCache.remove(key);
+
+        this.notify(key, null);
+
     }
 
     static async clear() {
@@ -282,18 +299,20 @@ export class Cache {
 // ------------------------
 
 private static notify<T>(
-        key: string,
-        data: T,
-    ) {
+    key: string,
+    data: T,
+) {
 
-        const listeners = this.listeners.get(key);
+    const listeners = this.listeners.get(key);
 
-        if (!listeners) return;
+    if (!listeners) return;
 
-        for (const listener of listeners) {
-            listener(data);
-        }
+    this.log("Notify", key);
+
+    for (const listener of listeners) {
+        listener(data);
     }
+}
 
 // ------------------------
 
@@ -349,22 +368,11 @@ static async update<T>(
     const updated = updater(cached.data);
 
     await this.store(key, updated);
+    return updated;
 
 }
 
-// ------------------------
 
-static async refresh<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-) {
-
-    return this.fetchAndStore(
-        key,
-        fetcher,
-    );
-
-}
 
 
 }

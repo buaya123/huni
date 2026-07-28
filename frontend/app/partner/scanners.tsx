@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { Avatar } from "@/src/components/Avatar";
 import { colors, spacing, radius, font } from "@/src/theme/tokens";
+import { PartnerRepository } from "@/src/repositories/PartnerRepository";
 
 type Scanner = {
   user_id: string;
@@ -80,7 +81,7 @@ export default function PartnerScanners() {
 
           onPress: async () => {
 
-            await api.del(`/partner/scanners/${id}`);
+            await PartnerRepository.removeScanner(id);
 
             load();
 

@@ -281,8 +281,21 @@ useEffect(() => {
         if (ev.type === "message" && ev.conversation_id === id) {
             const msg = ev.message as Message;
 
-            setMessages((prev) => {
-                if (prev.some((m) => m.id === msg.id))
+            setMessages(prev => {
+
+                const existing = prev.find(m =>
+                    m.id === msg.id ||
+                    (
+                        m.sender_id === msg.sender_id &&
+                        m.content === msg.content &&
+                        Math.abs(
+                            new Date(m.created_at).getTime() -
+                            new Date(msg.created_at).getTime()
+                        ) < 5000
+                    )
+                );
+
+                if (existing)
                     return prev;
 
                 return [...prev, msg];
@@ -337,29 +350,104 @@ const scrollToLatest = (animated = false) => {
     if (status.blocked) return;
     if (!text.trim() || sending) return;
     setSending(true);
+
+
+
     const tmp = text.trim();
+
+    const tempId = `temp-${Date.now()}`;
+
+    const optimistic: Message = {
+        id: tempId,
+        conversation_id: id,
+        sender_id: user!.id,
+        sender_alias: user!.alias,
+        content: tmp,
+        created_at: new Date().toISOString(),
+
+        pending: true,   
+    };
+
     setText("");
+    
+    setMessages(prev => [...prev, optimistic]);
+    scrollToLatest();
     try {
-        const msg = await ChatRepository.sendMessage(
-    id,
-    tmp,
-);
+        const msg = await ChatRepository.sendMessage(id, tmp);
 
-    setMessages(prev => {
-    const next = prev.some(m => m.id === msg.id)
-        ? prev
-        : [...prev, msg];
-
-
-
-    return next;
-});
+    setMessages(prev =>
+        prev.map(m =>
+            m.id === tempId
+                ? msg
+                : m
+        )
+    );
 
     scrollToLatest();
     } catch {
-      setText(tmp);
-    } finally {
+        setMessages(prev =>
+            prev.map(m =>
+                m.id === tempId
+                    ? {
+                        ...m,
+                        pending: false,
+                        failed: true,
+                    }
+                    : m
+            )
+        );
+
+        setText(tmp);
+    }finally {
       setSending(false);
+    }
+};
+
+const retryMessage = async (message: Message) => {
+    
+    if (!message.failed) return;
+    if (message.pending) return;
+
+    // Show "Sending..." again
+    setMessages(prev =>
+        prev.map(m =>
+            m.id === message.id
+                ? {
+                      ...m,
+                      pending: true,
+                      failed: false,
+                  }
+                : m
+        )
+    );
+
+    try {
+        const real = await ChatRepository.sendMessage(
+            id,
+            message.content
+        );
+
+        setMessages(prev =>
+            prev.map(m =>
+                m.id === message.id
+                    ? real
+                    : m
+            )
+        );
+
+        scrollToLatest();
+    } catch {
+        setMessages(prev =>
+            prev.map(m =>
+                m.id === message.id
+                    ? {
+                          ...m,
+                          pending: false,
+                          failed: true,
+                      }
+                    : m
+            )
+        );
     }
 };
 
@@ -543,7 +631,9 @@ const scrollToLatest = (animated = false) => {
                     <>
 
 
-                        <View
+                        <Pressable
+                            disabled={!item.failed}
+                            onPress={() => retryMessage(item)}
                             onLayout={() => {
 
                                 if (
@@ -573,6 +663,11 @@ const scrollToLatest = (animated = false) => {
                                     mine
                                         ? styles.mine
                                         : styles.other,
+
+                                    item.failed && {
+                                        borderWidth: 2,
+                                        borderColor: colors.error,
+                                    },
                                 ]}
                             >
                                 <Text
@@ -589,14 +684,18 @@ const scrollToLatest = (animated = false) => {
                                 <Text
                                     style={[
                                         styles.timeText,
-                                        mine &&
-                                            styles.timeMine,
+                                        mine && styles.timeMine,
+                                        item.failed && { color: colors.error },
                                     ]}
                                 >
-                                    {formatTime(item.created_at)}
+                                    {item.pending
+                                        ? "Sending..."
+                                        : item.failed
+                                            ? "Failed"
+                                            : formatTime(item.created_at)}
                                 </Text>
                             </View>
-                        </View>
+                        </Pressable>
 
                     </>
                 );

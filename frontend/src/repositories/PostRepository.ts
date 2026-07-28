@@ -1,5 +1,5 @@
 import { api } from "@/src/api/client";
-import type { Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
 import { Cache, CacheKeys } from "@/src/cache";
 
 
@@ -55,6 +55,14 @@ static async delete(
     postId: string,
 ): Promise<void> {
     await api.del(`/posts/${postId}`);
+}
+
+static async get(
+    postId: string,
+): Promise<Post> {
+
+    return api.get<Post>(`/posts/${postId}`);
+
 }
 
 

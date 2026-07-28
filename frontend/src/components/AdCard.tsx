@@ -9,6 +9,7 @@ import { colors, font, radius, spacing } from "@/src/theme/tokens";
 export type Ad = {
   type: "ad";
   id: string;
+  ad_id: string;
   advertiser_id: string;
   business_name: string;
   title: string;
@@ -34,18 +35,18 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
   useEffect(() => {
     if (!trackImpression || trackedRef.current) return;
     trackedRef.current = true;
-    api.post(`/ads/${ad.id}/impression`).catch(() => {});
+    api.post(`/ads/${ad.ad_id}/impression`).catch(() => {});
   }, [ad.id, trackImpression]);
 
   const onLearnMore = async () => {
     try {
-      const res = await api.post<{ link_url?: string | null }>(`/ads/${ad.id}/click`);
+      const res = await api.post<{ link_url?: string | null }>(`/ads/${ad.ad_id}/click`);
       if (res.link_url) Linking.openURL(res.link_url);
     } catch { /* ignore */ }
   };
 
   const openDetail = () => {
-    if (isFeed) router.push(`/ad/${ad.id}`);
+    if (isFeed) router.push(`/ad/${ad.ad_id}`);
   };
 
   return (

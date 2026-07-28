@@ -1,4 +1,4 @@
-import type { Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
 
 export type Profile = {
     id: string;

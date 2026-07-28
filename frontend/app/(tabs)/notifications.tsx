@@ -36,13 +36,21 @@ export default function Notifications() {
   const [items, setItems] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const PAGE_SIZE = 30;
+
+  const [offset, setOffset] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
 const load = useCallback(async () => {
 
     try {
 
-        const rows = await NotificationsRepository.list();
+      const rows = await NotificationsRepository.list(0, PAGE_SIZE);
 
-        setItems(rows);
+      setItems(rows);
+      setOffset(rows.length);
+      setHasMore(rows.length === PAGE_SIZE);
 
     } finally {
 
@@ -51,6 +59,36 @@ const load = useCallback(async () => {
     }
 
 }, []);
+
+const loadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore) return;
+
+    setLoadingMore(true);
+
+    try {
+        const rows = await NotificationsRepository.list(
+            offset,
+            PAGE_SIZE
+        );
+
+        setItems(prev => {
+            const ids = new Set(prev.map(n => n.id));
+
+            return [
+                ...prev,
+                ...rows.filter(n => !ids.has(n.id)),
+            ];
+        });
+
+        setOffset(prev => prev + rows.length);
+
+        if (rows.length < PAGE_SIZE) {
+            setHasMore(false);
+        }
+    } finally {
+        setLoadingMore(false);
+    }
+}, [loading, loadingMore, hasMore, offset]);
 
 useEffect(() => {
 
@@ -119,6 +157,16 @@ useFocusEffect(
               </Pressable>
             );
           }}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+              loadingMore ? (
+                  <ActivityIndicator
+                      color={colors.brand}
+                      style={{ marginVertical: spacing.lg }}
+                  />
+              ) : null
+          }
         />
       )}
     </SafeAreaView>

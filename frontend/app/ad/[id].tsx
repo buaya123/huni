@@ -16,16 +16,19 @@ export default function AdDetail() {
   const [ad, setAd] = useState<Ad | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+const load = useCallback(async () => {
+    console.log("Opening ad:", id);
+
     try {
-      const a = await api.get<Ad>(`/ads/${id}`);
-      setAd(a);
-    } catch {
-      // ignore
+        const a = await api.get<Ad>(`/ads/${id}`);
+        console.log("Loaded ad:", a);
+        setAd(a);
+    } catch (e) {
+        console.log("Failed to load ad:", id, e);
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }, [id]);
+}, [id]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -6,7 +6,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { imageUrl, api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
 import { Avatar } from "@/src/components/Avatar";
-import { PostCard, type Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
+import { PostCard } from "@/src/components/PostCard";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { UserRepository } from "@/src/repositories/UserRepository"
 import { ChatRepository } from "@/src/repositories/ChatRepository";

@@ -1,5 +1,5 @@
 import { api } from "@/src/api/client";
-import type { Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
 
 import type {
     Profile,

@@ -5,7 +5,10 @@ export type Message = {
     sender_alias: string;
     content: string;
     created_at: string;
-};
+
+    pending?: boolean;
+    failed?: boolean;
+}
 
 export type Conv = {
     id: string;
@@ -23,3 +26,4 @@ export type ConversationStatus = {
     blocked_by_me: boolean;
     blocked_by_other: boolean;
 };
+

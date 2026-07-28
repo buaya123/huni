@@ -11,22 +11,31 @@ import type { Notification } from "@/src/models/Notification";
 
 export class NotificationsRepository {
 
-    static async list(): Promise<Notification[]> {
+    static async list(
+    offset = 0,
+    limit = 30
+): Promise<Notification[]> {
 
-        return Cache.get<Notification[]>(
-
+    // Only cache the first page
+    if (offset === 0) {
+        return Cache.get(
             CacheKeys.notifications,
-
-            () => api.get<Notification[]>("/notifications"),
-
+            () =>
+                api.get<Notification[]>(
+                    `/notifications?offset=${offset}&limit=${limit}`
+                ),
             {
                 ttl: CachePolicy.notifications,
                 strategy: CacheStrategy.StaleWhileRevalidate,
             }
-
         );
-
     }
+
+    // Additional pages should never be cached
+    return api.get<Notification[]>(
+        `/notifications?offset=${offset}&limit=${limit}`
+    );
+}
 
     static async refresh() {
 
@@ -34,7 +43,10 @@ export class NotificationsRepository {
 
             CacheKeys.notifications,
 
-            () => api.get<Notification[]>("/notifications")
+            () =>
+                api.get<Notification[]>(
+                    "/notifications?offset=0&limit=30"
+                )
 
         );
 

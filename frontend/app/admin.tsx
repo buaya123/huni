@@ -27,6 +27,8 @@ import type {
 import { AdminSettingsRepository } from "@/src/repositories/AdminSettingsRepository";
 import { AdminCampaignRepository } from "@/src/repositories/AdminCampaignRepository";
 import { AdsRepository } from "@/src/repositories/AdsRepository";
+import { useAdminUsersStore } from "@/src/stores/admin/useAdminUsersStore"
+import { useAdminDashboardStore } from "@/src/stores/admin/useAdminDashboardStore";
 
 function rewardSummary(c: { exp_per_redemption?: number; tokens_per_redemption?: number; discount_label?: string }): string {
   const parts: string[] = [];
@@ -61,12 +63,28 @@ type AdminAd = {
 export default function AdminPanel() {
   const router = useRouter();
   const { user } = useAuth();
-  const [everyN, setEveryN] = useState<number | null>(null);
-  const [query, setQuery] = useState("");
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [ads, setAds] = useState<AdminAd[]>([]);
-  const [campaigns, setCampaigns] = useState<AdminCampaign[]>([]);
+  
+
+  const query = useAdminUsersStore((s) => s.query);
+  const users = useAdminUsersStore((s) => s.users);
+  const searching = useAdminUsersStore((s) => s.searching);
+
+  const setQuery = useAdminUsersStore((s) => s.setQuery);
+  const search = useAdminUsersStore((s) => s.search);
+  const updateRole = useAdminUsersStore((s) => s.updateRole);
+  const promotePartnerRole = useAdminUsersStore((s) => s.promotePartner);
+
+  const everyN = useAdminDashboardStore((s) => s.everyN);
+  const ads = useAdminDashboardStore((s) => s.ads);
+  const campaigns = useAdminDashboardStore((s) => s.campaigns);
+
+  const load = useAdminDashboardStore((s) => s.load);
+  const updateEveryN = useAdminDashboardStore((s) => s.updateEveryN);
+  const toggleAd = useAdminDashboardStore((s) => s.toggleAd);
+  const setCampaigns = useAdminDashboardStore(
+      (s) => s.setCampaigns
+  );
+
   const [promotePartner, setPromotePartner] = useState<{ userId: string; businessName: string; businessType: string } | null>(null);
   const [reviewCampaign, setReviewCampaign] = useState<AdminCampaign | null>(null);
   const [rejectReason, setRejectReason] = useState<string>("");
@@ -80,63 +98,39 @@ export default function AdminPanel() {
 
   const isAdmin = user?.role === "admin";
 
-  const load = useCallback(async () => {
-    try {
-      const [s, allAds, allCamps] = await Promise.all([
-          AdminSettingsRepository.get(),
-          AdsRepository.getAll(),
-          AdminCampaignRepository.getAll()
-      ]);
-      setEveryN(s.ad_every_n_posts);
-      setAds(allAds);
-      setCampaigns(allCamps);
-    } catch { /* ignore */ }
-  }, []);
 
   useEffect(() => {
     if (isAdmin) load();
   }, [isAdmin, load]);
 
-  const search = async () => {
-    setSearching(true);
-    try {
-      const rows = await AdminUsersRepository.search(
-    query.trim()
-);
-      setUsers(rows);
-    } catch {
-      setUsers([]);
-    } finally {
-      setSearching(false);
-    }
-  };
 
-  const setRole = async (u: AdminUser, role: "user" | "advertiser" | "partner") => {
-    if (role === "partner") {
-      setPromotePartner({ userId: u.id, businessName: "", businessType: "" });
-      return;
-    }
-    try {
-      await AdminUsersRepository.updateRole(
-    u.id,
-    { role }
-);
-      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role } : x)));
-    } catch { /* ignore */ }
+  const setRole = async (
+      u: AdminUser,
+      role: "user" | "advertiser" | "partner"
+  ) => {
+      if (role === "partner") {
+          setPromotePartner({
+              userId: u.id,
+              businessName: "",
+              businessType: "",
+          });
+          return;
+      }
+
+      try {
+          await updateRole(u, role);
+      } catch {
+          // ignore
+      }
   };
 
   const confirmPartnerPromotion = async () => {
     if (!promotePartner) return;
     try {
-      await AdminUsersRepository.updateRole(
-    promotePartner.userId,
-    {
-        role: "partner",
-        business_name: promotePartner.businessName.trim(),
-        business_type: promotePartner.businessType.trim(),
-    }
-);
-      setUsers((prev) => prev.map((x) => (x.id === promotePartner.userId ? { ...x, role: "partner" } : x)));
+      await promotePartnerRole(promotePartner.userId, {
+          businessName: promotePartner.businessName,
+          businessType: promotePartner.businessType,
+      });
       setPromotePartner(null);
     } catch { /* ignore */ }
   };
@@ -165,17 +159,17 @@ export default function AdminPanel() {
           budget_exp: expBudget,
           budget_tokens: tokBudget,
       });
-      setCampaigns((prev) => prev.map((x) => (x.id === approving.id ? {
-        ...x,
-        status: "approved",
-        state: "live",
-        exp_per_redemption: expPer,
-        tokens_per_redemption: tokPer,
-        budget_exp: expBudget,
-        budget_tokens: tokBudget,
-        remaining_exp: expBudget,
-        remaining_tokens: tokBudget,
-      } : x)));
+      setCampaigns(
+        campaigns.map(x =>
+            x.id === approving.id
+                ? {
+                      ...x,
+                      status: "approved",
+                      // ...
+                  }
+                : x
+        )
+    );
       setApproving(null);
       setReviewCampaign(null);
     } catch (e) {
@@ -191,33 +185,23 @@ export default function AdminPanel() {
       await AdminCampaignRepository.reject(rejectingId, {
           reason: rejectReason.trim(),
       });
-      setCampaigns((prev) => prev.map((x) => (x.id === rejectingId ? { ...x, status: "rejected", state: "rejected", rejected_reason: rejectReason.trim() } : x)));
+      setCampaigns(
+          campaigns.map(x =>
+              x.id === rejectingId
+                  ? {
+                        ...x,
+                        status: "rejected",
+                        state: "rejected",
+                        rejected_reason: rejectReason.trim(),
+                    }
+                  : x
+          )
+      );
       setReviewCampaign((r) => (r && r.id === rejectingId ? { ...r, status: "rejected", state: "rejected", rejected_reason: rejectReason.trim() } : r));
       setRejectingId(null);
       setRejectReason("");
     } catch (e) {
       Alert.alert("Error", e instanceof Error ? e.message : "Could not reject");
-    }
-  };
-
-  const updateEveryN = async (val: number) => {
-    const clamped = Math.min(20, Math.max(2, val));
-    setEveryN(clamped);
-    try {
-      await AdminSettingsRepository.update({
-    ad_every_n_posts: clamped,
-});
-    } catch { /* ignore */ }
-  };
-
-  const toggleAd = async (ad: AdminAd, value: boolean) => {
-    setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, enabled: value } : a)));
-    try {
-      await AdsRepository.update(ad.id, {
-          enabled: value,
-      });
-    } catch {
-      setAds((prev) => prev.map((a) => (a.id === ad.id ? { ...a, enabled: !value } : a)));
     }
   };
 

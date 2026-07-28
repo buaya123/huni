@@ -5,24 +5,37 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/auth";
-import { PostCard, type Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
+import { PostCard } from "@/src/components/PostCard";
 import { CommentsSection } from "@/src/components/CommentsSection";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { ReportRepository } from "@/src/repositories/ReportRepository";
 import { UserRepository } from "@/src/repositories/UserRepository";
 import { PostRepository } from "@/src/repositories/PostRepository";
+import { useFeedStore } from "@/src/stores/feed/useFeedStore"
 
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const react = useFeedStore((s) => s.react);
+  const toggleBookmark = useFeedStore((s) => s.toggleBookmark);
+  const votePulse = useFeedStore((s) => s.votePulse);
+  const loadPost = useFeedStore((s) => s.loadPost);
+  const storePost = useFeedStore((s) => s.getPost(id));
+  
   const router = useRouter();
   const { user } = useAuth();
   const [post, setPost] = useState<Post | null>(null);
+
+
+
   const [loading, setLoading] = useState(true);
   const [showActions, setShowActions] = useState(false);
 
+
+
   const load = useCallback(async () => {
     try {
-      const p = await api.get<Post>(`/posts/${id}`);
+      const p = await loadPost(id);
       setPost(p);
     } catch {
       // ignore
@@ -46,10 +59,10 @@ export default function PostDetail() {
 
   const doBlock = async () => {
     setShowActions(false);
-    if (!post) return;
+    if (!displayPost) return;
     try {
       await UserRepository.block(
-    post.author.id,
+    displayPost.author.id,
 );
       router.back();
     } catch { /* ignore */ }
@@ -64,15 +77,15 @@ export default function PostDetail() {
   };
 
   if (loading || !post) {
+    
     return (
       <SafeAreaView style={styles.wrap} edges={["top"]}>
         <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
       </SafeAreaView>
     );
   }
-
-  const isMine = post.author.id === user?.id;
-
+  const displayPost = storePost ?? post;
+  const isMine = displayPost.author.id === user?.id;
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
@@ -100,15 +113,15 @@ export default function PostDetail() {
               </Pressable>
               <Pressable style={styles.action} onPress={doBlock} testID="block-user-btn">
                 <Ionicons name="ban-outline" size={18} color={colors.error} />
-                <Text style={[styles.actionText, { color: colors.error }]}>Block {post.author.alias}</Text>
+                <Text style={[styles.actionText, { color: colors.error }]}>Block {displayPost.author.alias}</Text>
               </Pressable>
               <Pressable
                 style={styles.action}
                 onPress={async () => {
                   setShowActions(false);
                   try {
-                    const c = await api.post<{ id: string }>("/chat/start", { other_user_id: post.author.id });
-                    router.push(`/chat/${c.id}?alias=${encodeURIComponent(post.author.alias)}&userId=${post.author.id}`);
+                    const c = await api.post<{ id: string }>("/chat/start", { other_user_id: displayPost.author.id });
+                    router.push(`/chat/${c.id}?alias=${encodeURIComponent(displayPost.author.alias)}&userId=${displayPost.author.id}`);
                   } catch { /* ignore */ }
                 }}
                 testID="chat-user-btn"
@@ -126,11 +139,14 @@ export default function PostDetail() {
         targetId={id}
         header={
             <PostCard
-                post={post}
-                onChange={(updated) => {
-    console.log("DETAIL RECEIVED", updated);
-    setPost(updated);
-}}
+                post={displayPost}
+
+                onReact={(kind: string) => react(displayPost.id, kind)}
+
+                onBookmark={() => toggleBookmark(displayPost.id)}
+
+                onVotePulse={(index: number) => votePulse(displayPost.id, index)}
+
                 onPress={() => {}}
                 mode="detail"
             />

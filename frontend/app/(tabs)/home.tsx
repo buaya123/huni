@@ -16,16 +16,22 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { PostCard, type Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
+import { PostCard } from "@/src/components/PostCard";
 import { AdCard, type Ad } from "@/src/components/AdCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import { FeedSkeleton } from "@/src/components/FeedSkeleton";
-import { FeedRepository } from "@/src/repositories/FeedRespository"
+import { useFeedStore } from "@/src/stores/feed/useFeedStore";
+import { PAGE_SIZE } from "@/src/stores/feed/feed.constants";
+import { FeedTab } from "@/src/stores/feed/feed.types";
+import { FeedRepository } from "@/src/repositories/FeedRespository";
+import {
+    FeedCache,
+    FeedItem,
+    emptyFeed,
+} from "@/src/stores/feed/feed.types";
 
-const PAGE_SIZE = 5;
-
-type FeedItem = (Post & { type?: undefined }) | Ad;
 
 const TABS: { key: "latest" | "trending" | "nearby" | "pulse"; label: string }[] = [
   { key: "latest", label: "Latest" },
@@ -37,15 +43,27 @@ const TABS: { key: "latest" | "trending" | "nearby" | "pulse"; label: string }[]
 
 
 export default function Home() {
-  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("latest");
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+const {
+    tab,
+    setTab,
+    loading,
+    refreshing,
+    loadingMore,
+    feeds,
+    updatePost,
+    refresh
+} = useFeedStore();
 
-  const [loadingMore, setLoadingMore] = useState(false);
+const {
+    react,
+    toggleBookmark,
+    votePulse,
+} = useFeedStore();
+
+  const { load } = useFeedStore();
+
   const listRef = useRef<FlatList<FeedItem>>(null);
-  const firstVisiblePost = useRef<
-      Record<(typeof TABS)[number]["key"], string | null>
-  >({
+  const firstVisiblePost = useRef<Record<FeedTab, string | null>>({
       latest: null,
       trending: null,
       nearby: null,
@@ -73,147 +91,31 @@ const onViewableItemsChanged = useRef(
     }
 );
 
-
-  
-
-type FeedCache = {
-    posts: FeedItem[];
-    offset: number;
-    hasMore: boolean;
-    lastFetched: number;
-};
-
-const emptyFeed: FeedCache = {
-    posts: [],
-    offset: 0,
-    hasMore: true,
-    lastFetched: 0
-};
-
-const [feeds, setFeeds] = useState<
-    Record<
-        (typeof TABS)[number]["key"],
-        FeedCache
-    >
->({
-    latest: { ...emptyFeed },
-    trending: { ...emptyFeed },
-    nearby: { ...emptyFeed },
-    pulse: { ...emptyFeed },
-});
-
 const currentFeed = feeds[tab];
 
-const load = useCallback(async () => {
+const handleLoad = useCallback(async () => {
+    await load();
+}, [load]);
 
-
-
-    try {
-
-        const feed =
-            await FeedRepository.load<FeedItem>(
-                tab,
-                PAGE_SIZE,
-            );
-
-        setFeeds(prev => ({
-            ...prev,
-            [tab]: feed,
-        }));
-
-    } catch {
-
-        setFeeds(prev => ({
-            ...prev,
-            [tab]: {
-                posts: [],
-                offset: 0,
-                hasMore: false,
-                lastFetched: Date.now(),
-            },
-        }));
-
-    } finally {
-
-        setLoading(false);
-
-    }
-
-}, [tab]);
-
-const loadMore = useCallback(async () => {
-
-   if (
-        loadingMore ||
-        loading ||
-        refreshing ||
-        !currentFeed.hasMore
-    ) {
-        return;
-    }
-
-    try {
-
-        setLoadingMore(true);
-
-        const nextFeed = await FeedRepository.loadMore<FeedItem>(
-            tab,
-            currentFeed,
-            PAGE_SIZE,
-        );
-
-        setFeeds(prev => ({
-            ...prev,
-            [tab]: nextFeed,
-        }));
-
-    } finally {
-
-        setLoadingMore(false);
-
-    }
-
-}, [
-    tab,
-    loading,
-    loadingMore,
-    currentFeed,
-]);
+const { loadMore } = useFeedStore();
 
 useEffect(() => {
-
     if (currentFeed.posts.length === 0) {
-        setLoading(true);
-        load();
-    } else {
-        setLoading(false);
+        handleLoad();
     }
-
-}, [tab]);
+}, [tab, currentFeed.posts.length, handleLoad]);
 
 
 
 
 
 const onRefresh = useCallback(async () => {
-
     if (refreshing || loading) {
         return;
     }
 
-    setRefreshing(true);
-
-    try {
-
-        await load();
-
-    } finally {
-
-        setRefreshing(false);
-
-    }
-
-}, [refreshing, loading, load]);
+    await refresh();
+}, [refreshing, loading, refresh]);
 
 const ids = currentFeed.posts.map(p => p.id);
 
@@ -315,11 +217,13 @@ const duplicateIds = ids.filter(
 
     
 
-    if ((item as any).type === "ad") {
-
-        return <AdCard ad={item as Ad} />;
-
-    }
+    if (item.type === "ad") {
+    return (
+        <AdCard
+            ad={item}
+        />
+    );
+}
 
     if (!(item as any).id) {
 
@@ -330,23 +234,11 @@ const duplicateIds = ids.filter(
     return (
 
         <PostCard
-            post={item as Post}
-            onChange={(updated) =>{
-                console.log("FEED RECEIVED", updated);
-                setFeeds(prev => ({
-    ...prev,
-    [tab]: {
-        ...prev[tab],
-        posts: prev[tab].posts.map(p =>
-            p.id === updated.id &&
-            p.type !== "ad"
-                ? updated
-                : p
-        ),
-    },
-}))
-            }}
-        />
+        post={item}
+        onReact={(kind) => react(item.id, kind)}
+        onBookmark={() => toggleBookmark(item.id)}
+        onVotePulse={(index) => votePulse(item.id, index)}
+    />
 
     );
 

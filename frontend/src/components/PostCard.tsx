@@ -6,33 +6,8 @@ import { colors, font, radius, REACTIONS, shadow, spacing } from "@/src/theme/to
 import { Avatar } from "./Avatar";
 import { MoodChip } from "./MoodChip";
 import { PostImages } from "./PostImages";
-import { PostRepository } from "@/src/repositories/PostRepository";
+import type { Post } from "@/src/models/Post";
 
-export type PostAuthor = {
-  id: string;
-  alias: string;
-  helpful_score?: number;
-};
-
-export type Post = {
-  id: string;
-  author: PostAuthor;
-  title: string;
-  content: string;
-  mood: string;
-  audience: string;
-  created_at: string;
-  reactions: Record<string, number>;
-  reaction_total: number;
-  my_reaction: string | null;
-  comment_count: number;
-  pulse_options?: string[] | null;
-  pulse_votes?: number[] | null;
-  my_pulse_vote?: number | null;
-  images?: string[];
-  is_bookmarked?: boolean;
-  bookmark_count?: number;
-};
 
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
@@ -44,16 +19,30 @@ function timeAgo(iso: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-type Props = {
-  post: Post;
-  onChange?: (p: Post) => void;
-  onPress?: () => void;
-  mode?: "feed" | "detail";
-};
+
 
 const PREVIEW_LEN = 120;
 
-export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
+
+
+type Props = {
+    post: Post;
+    onChange?: (post: Post) => void;
+    onReact?: (kind: string) => void;
+    onBookmark?: () => void;
+    onVotePulse?: (index: number) => void;
+    onPress?: () => void;
+    mode?: "feed" | "detail";
+};
+
+export function PostCard({
+    post,
+    onReact,
+    onBookmark,
+    onVotePulse,
+    onPress,
+    mode = "feed",
+}: Props) {
   const router = useRouter();
   console.log("POST DEBUG", {
     id: post.id,
@@ -64,45 +53,17 @@ export function PostCard({ post, onChange, onPress, mode = "feed" }: Props) {
     reactions: post.reactions,
 });
 
-  const react = async (kind: string) => {
-    try {
-
-        const updated = await PostRepository.react(post.id, kind);
-
-console.log("UPDATED POST", updated);
-console.log("CALLING onChange");
-
-onChange?.(updated);
-
-    } catch {
-        // ignore
-    }
+const react = (kind: string) => {
+    onReact?.(kind);
 };
 
-const votePulse = async (idx: number) => {
-    try {
-
-        const updated =
-            await PostRepository.votePulse(
-                post.id,
-                idx,
-            );
-
-        onChange?.(updated);
-
-    } catch {
-        // ignore
-    }
+const votePulse = (idx: number) => {
+    onVotePulse?.(idx);
 };
 
-  const toggleBookmark = async () => {
-    try {
-      const updated =
-      await PostRepository.toggleBookmark(post);
-
-      onChange?.(updated);
-    } catch { /* ignore */ }
-  };
+const toggleBookmark = () => {
+    onBookmark?.();
+};
 
   const openProfile = () => {
 

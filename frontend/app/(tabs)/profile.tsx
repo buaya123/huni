@@ -4,11 +4,14 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/auth";
-import { api, imageUrl } from "@/src/api/client";
+import { imageUrl } from "@/src/api/client";
 import { Avatar } from "@/src/components/Avatar";
-import { PostCard, type Post } from "@/src/components/PostCard";
+import type { Post } from "@/src/models/Post";
+import { PostCard } from "@/src/components/PostCard";
 import { EmptyState } from "@/src/components/EmptyState";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { ProfileRepository } from "@/src/repositories/ProfileRepository"
+import { useProfileStore } from "@/src/stores/profile/useProfileStore";
 
 type CommentedPost = Post & { my_comment_preview?: string; my_comment_at?: string };
 type EquippedStyles = Record<string, { item_id: string; image_id: string | null; hex_color: string | null; name: string } | null>;
@@ -17,61 +20,76 @@ export default function Profile() {
   const router = useRouter();
   const { user, refresh, regenerateAlias, updateBio } = useAuth();
   const [tab, setTab] = useState<"posts" | "comments" | "listen">("posts");
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [commented, setCommented] = useState<CommentedPost[]>([]);
-  const [listened, setListened] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const PAGE_SIZE = 30;
+
+  const [postsOffset, setPostsOffset] = useState(30);
+  const [commentsOffset, setCommentsOffset] = useState(30);
+  const [listenedOffset, setListenedOffset] = useState(30);
+
+  const [postsHasMore, setPostsHasMore] = useState(true);
+  const [commentsHasMore, setCommentsHasMore] = useState(true);
+  const [listenedHasMore, setListenedHasMore] = useState(true);
+
+  const [loadingMore, setLoadingMore] = useState(false);
+  const posts = useProfileStore((s) => s.posts);
+  const commented = useProfileStore((s) => s.commented);
+  const listened = useProfileStore((s) => s.listened);
+  const equipped = useProfileStore((s) => s.equipped);
+  const scannerPartners = useProfileStore((s) => s.scannerPartners);
+
+  const loading = useProfileStore((s) => s.loading);
+  const load = useProfileStore((s) => s.load);
   const [editingBio, setEditingBio] = useState(false);
   const [bio, setBio] = useState("");
   const [regenNote, setRegenNote] = useState<string | null>(null);
-  const [scannerPartners, setScannerPartners] = useState<any[]>([]);
-  const [equipped, setEquipped] = useState<EquippedStyles>({});
+  const refreshing = useProfileStore((s) => s.refreshing);
+  const setPosts = useProfileStore((s) => s.setPosts);
+  const setListened = useProfileStore((s) => s.setListened);
+  const refreshProfile = useProfileStore((s) => s.refresh);
 
-  const load = useCallback(async () => {
-    if (!user) return;
-    try {
-      const [ps, cps, bms, equ] = await Promise.all([
-        api.get<Post[]>(`/users/${user.id}/posts`),
-        api.get<CommentedPost[]>(`/users/${user.id}/commented-posts`),
-        api.get<Post[]>("/me/bookmarks").catch(() => [] as Post[]),
-        api.get<EquippedStyles>("/me/equipped_styles").catch(() => ({} as EquippedStyles)),
-      ]);
-      setPosts(ps);
-      setCommented(cps);
-      setListened([...bms].reverse());
-      setEquipped(equ);
-      try {
-          const partners = await api.get<any[]>("/scanner/partners");
-          setScannerPartners(partners);
-      } catch {
-          setScannerPartners([]);
-      }
-    } catch {
-      setPosts([]);
-      setCommented([]);
-      setListened([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const setCommented = useProfileStore((s) => s.setCommented);
+
+useEffect(() => {
+    if (user) {
+        load(user.id);
     }
-  }, [user]);
+}, [user, load]);
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+useEffect(() => {
+    setPostsOffset(posts.length);
+    setCommentsOffset(commented.length);
+    setListenedOffset(listened.length);
+
+    setPostsHasMore(posts.length === PAGE_SIZE);
+    setCommentsHasMore(commented.length === PAGE_SIZE);
+    setListenedHasMore(listened.length === PAGE_SIZE);
+}, [posts, commented, listened]);
 
   // Re-fetch when the tab regains focus so newly-listened posts show up.
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+        if (user) {
+            load(user.id);
+        }
+    }, [user, load])
+);
 
   useEffect(() => { if (user) setBio(user.bio ?? ""); }, [user]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    refresh();
-    load();
-  }, [refresh, load]);
+const onRefresh = useCallback(async () => {
+    await refresh();
+
+    if (user) {
+        await refreshProfile(user.id);
+        setPostsOffset(posts.length);
+        setCommentsOffset(commented.length);
+        setListenedOffset(listened.length);
+
+        setPostsHasMore(posts.length === PAGE_SIZE);
+        setCommentsHasMore(commented.length === PAGE_SIZE);
+        setListenedHasMore(listened.length === PAGE_SIZE);
+    }
+}, [refresh, refreshProfile, user]);
 
   if (!user) return null;
 
@@ -91,6 +109,86 @@ export default function Profile() {
       setEditingBio(false);
     } catch { /* ignore */ }
   };
+
+  const loadMorePosts = async () => {
+    if (!user || loadingMore || !postsHasMore) return;
+
+    setLoadingMore(true);
+
+    try {
+        const rows = await ProfileRepository.loadPosts(
+            user.id,
+            postsOffset,
+            PAGE_SIZE
+        );
+
+        setPosts([
+            ...posts,
+            ...rows.filter(r => !posts.some(p => p.id === r.id)),
+        ]);
+
+        setPostsOffset(postsOffset + rows.length);
+
+        if (rows.length < PAGE_SIZE) {
+            setPostsHasMore(false);
+        }
+    } finally {
+        setLoadingMore(false);
+    }
+};
+
+const loadMoreComments = async () => {
+    if (!user || loadingMore || !commentsHasMore) return;
+
+    setLoadingMore(true);
+
+    try {
+        const rows = await ProfileRepository.loadComments(
+            user.id,
+            commentsOffset,
+            PAGE_SIZE
+        );
+
+        setCommented([
+            ...commented,
+            ...rows.filter(r => !commented.some(c => c.id === r.id)),
+        ]);
+
+        setCommentsOffset(prev => prev + rows.length);
+
+        if (rows.length < PAGE_SIZE) {
+            setCommentsHasMore(false);
+        }
+    } finally {
+        setLoadingMore(false);
+    }
+};
+
+const loadMoreListened = async () => {
+    if (loadingMore || !listenedHasMore) return;
+
+    setLoadingMore(true);
+
+    try {
+        const rows = await ProfileRepository.loadListened(
+            listenedOffset,
+            PAGE_SIZE
+        );
+
+        setListened([
+            ...listened,
+            ...rows.filter(r => !listened.some(p => p.id === r.id)),
+        ]);
+
+        setListenedOffset(prev => prev + rows.length);
+
+        if (rows.length < PAGE_SIZE) {
+            setListenedHasMore(false);
+        }
+    } finally {
+        setLoadingMore(false);
+    }
+};
 
   const joined = user.joined_at ? new Date(user.joined_at).toLocaleDateString() : "";
   const bgColor = equipped?.bg_color?.hex_color || colors.brand;
@@ -249,8 +347,30 @@ export default function Profile() {
           ) : (
             <View style={{ paddingHorizontal: spacing.lg }}>
               {posts.map((p) => (
-                <PostCard key={p.id} post={p} onChange={(u) => setPosts((prev) => prev.map((x) => x.id === u.id ? u : x))} />
-              ))}
+                <PostCard
+                    key={p.id}
+                    post={p}
+                    onChange={(u) =>
+                        setPosts(
+                            posts.map(x => x.id === u.id ? u : x)
+                        )
+                    }
+                />
+              ))             
+              }
+              {postsHasMore && (
+                  <Pressable
+                      style={styles.loadMore}
+                      onPress={loadMorePosts}
+                      disabled={loadingMore}
+                  >
+                      {loadingMore ? (
+                          <ActivityIndicator color={colors.brand} />
+                      ) : (
+                          <Text style={styles.loadMoreText}>Load More</Text>
+                      )}
+                  </Pressable>
+              )}
             </View>
           )
         ) : tab === "listen" ? (
@@ -263,16 +383,13 @@ export default function Profile() {
             <View style={{ paddingHorizontal: spacing.lg }}>
               {listened.map((p) => (
                 <PostCard
-                  key={p.id}
-                  post={p}
-                  onChange={(u) => {
-                    if (!u.is_bookmarked) {
-                      // Un-listen: drop the post from this list immediately.
-                      setListened((prev) => prev.filter((x) => x.id !== u.id));
-                    } else {
-                      setListened((prev) => prev.map((x) => (x.id === u.id ? u : x)));
-                    }
-                  }}
+                    key={p.id}
+                    post={p}
+                    onChange={(u)=>{
+                      setListened(
+                          listened.filter(x => x.id !== u.id)
+                      )
+                    }}
                 />
               ))}
             </View>
@@ -396,4 +513,14 @@ const styles = StyleSheet.create({
   myCommentText: { flex: 1, color: colors.onBrandTertiary, fontSize: font.sm, fontStyle: "italic" },
   threadFooter: { flexDirection: "row", gap: spacing.sm, marginTop: 2 },
   threadStat: { fontSize: font.sm, color: colors.muted },
+  loadMore: {
+    marginVertical: spacing.lg,
+    alignItems: "center",
+    padding: spacing.md,
+},
+
+loadMoreText: {
+    color: colors.brand,
+    fontWeight: "700",
+},
 });

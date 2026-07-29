@@ -40,6 +40,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 from pathlib import Path
+from routes import legal
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -74,6 +76,8 @@ security = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Huni API")
 api = APIRouter(prefix="/api")
+
+app.include_router(legal.router)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("huni")
@@ -1076,8 +1080,22 @@ async def toggle_bookmark(post_id: str, user: Dict[str, Any] = Depends(get_curre
 
 
 @api.get("/me/bookmarks")
-async def my_bookmarks(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
-    rows = await db.bookmarks.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+async def my_bookmarks(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    rows = await (
+    db.bookmarks
+    .find(
+        {"user_id": user["id"]},
+        {"_id": 0},
+    )
+    .sort("created_at", -1)
+    .skip(offset)
+    .limit(limit)
+    .to_list(limit)
+)
     out: List[Dict[str, Any]] = []
     for b in rows:
         p = await db.posts.find_one({"id": b["post_id"], "status": "active"}, {"_id": 0})
@@ -1135,10 +1153,10 @@ def _hydrate_ad(a: Dict[str, Any], feed_key: str | None = None) -> Dict[str, Any
         "type": "ad",
 
         # unique key for React
-        "id": feed_key or a["id"],
+        "id": a["id"],
 
         # real ad id
-        "ad_id": a["id"],
+        "feed_key": feed_key or a["id"],
 
         "advertiser_id": a["advertiser_id"],
         "business_name": a["business_name"],
@@ -2834,9 +2852,26 @@ async def delete_comment(comment_id: str, user: Dict[str, Any] = Depends(get_cur
 
 
 # ---------- routes: notifications ----------
+
 @api.get("/notifications")
-async def list_notifications(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
-    rows = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(100).to_list(100)
+async def list_notifications(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+
+    rows = await (
+        db.notifications
+        .find(
+            {"user_id": user["id"]},
+            {"_id": 0},
+        )
+        .sort("created_at", -1)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
+    )
+
     return rows
 
 
@@ -2862,13 +2897,35 @@ async def get_user(user_id: str, user: Dict[str, Any] = Depends(get_current_user
 
 
 @api.get("/users/{user_id}/posts")
-async def user_posts(user_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
-    rows = await db.posts.find({"author_id": user_id, "status": "active"}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+async def user_posts(
+    user_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+
+    rows = await (
+        db.posts
+        .find(
+            {"author_id": user_id, "status": "active"},
+            {"_id": 0},
+        )
+        .sort("created_at", -1)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
+    )
+
     return [await _hydrate_post(p, user["id"]) for p in rows]
 
 
 @api.get("/users/{user_id}/commented-posts")
-async def user_commented_posts(user_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+async def user_commented_posts(
+    user_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
     """Return posts that the given user has commented on (deduped, latest-comment first)."""
     # gather distinct post_ids from user's active comments, keep newest per post
     pipeline = [
@@ -2876,9 +2933,10 @@ async def user_commented_posts(user_id: str, user: Dict[str, Any] = Depends(get_
         {"$sort": {"created_at": -1}},
         {"$group": {"_id": "$post_id", "latest_comment_at": {"$first": "$created_at"}, "my_comment": {"$first": "$content"}}},
         {"$sort": {"latest_comment_at": -1}},
-        {"$limit": 50},
+        {"$skip": offset},
+        {"$limit": limit},
     ]
-    grouped = await db.comments.aggregate(pipeline).to_list(50)
+    grouped = await db.comments.aggregate(pipeline).to_list(limit)
     out: List[Dict[str, Any]] = []
     for row in grouped:
         post = await db.posts.find_one({"id": row["_id"], "status": "active"}, {"_id": 0})

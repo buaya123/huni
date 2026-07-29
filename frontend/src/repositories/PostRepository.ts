@@ -32,7 +32,7 @@ static async react(
             (post.bookmark_count ?? 0) +
             (r.is_bookmarked ? 1 : -1),
     };
-    console.log("BOOKMARK RESPONSE", updated);
+
     return updated;
 
 }

@@ -47,7 +47,6 @@ export default function PartnerHub() {
 
     } catch (e) {
 
-        console.log(e);
 
         setItems([]);
         setScannerPartners([]);

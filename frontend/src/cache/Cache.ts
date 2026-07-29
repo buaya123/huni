@@ -23,8 +23,6 @@ export class Cache {
 
         if (!__DEV__) return;
 
-        console.log("[Cache]", ...args);
-
     }
     
 

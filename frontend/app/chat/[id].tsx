@@ -196,15 +196,6 @@ const load = useCallback(async () => {
     ChatRepository.getStatus(id),
 ]);
 
-        console.log("ROWS:", rows.length);
-
-        rows.forEach((m, i) => {
-            console.log(
-                i,
-                m.created_at,
-                m.content
-            );
-        });
 
         setMessages(rows);
 
@@ -530,7 +521,6 @@ const retryMessage = async (message: Message) => {
     onLayout={(e) => {
                 const newHeight = e.nativeEvent.layout.height;
 
-                console.log("FlatList height:", newHeight);
 
                 if (
                     previousHeight.current &&

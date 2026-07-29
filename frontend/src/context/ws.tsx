@@ -37,7 +37,7 @@ export function WSProvider({ children }: { children: React.ReactNode }) {
         //const socket = new WebSocket(wsUrl(token));
         
         const url = wsUrl(token);
-        console.log("WS URL:", url);
+
         const socket = new WebSocket(url);
 
         wsRef.current = socket;

@@ -44,14 +44,7 @@ export function PostCard({
     mode = "feed",
 }: Props) {
   const router = useRouter();
-  console.log("POST DEBUG", {
-    id: post.id,
-    title: post.title,
-    content: post.content,
-    author: post.author,
-    images: post.images,
-    reactions: post.reactions,
-});
+
 
 const react = (kind: string) => {
     onReact?.(kind);

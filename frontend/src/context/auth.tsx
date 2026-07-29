@@ -138,11 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Save Huni JWT
     await setToken(res.token);
     setUser(res.user);
-    console.log("TOKEN:", res.token);
-    console.log("USER:", res.user);
-    
-    console.log("✅ Huni token:", res.token);
-    console.log("✅ Huni user:", res.user);
+
   } catch (err) {
     console.error("Google Sign-In failed:", err);
     throw err;

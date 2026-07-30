@@ -349,7 +349,7 @@ export default function AdminStore() {
 
                   <Pressable
                     onPress={() => {
-                        console.log("DELETE PRESSED");
+
                         removeItem(item);
                     }}
                     hitSlop={8}

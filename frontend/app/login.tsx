@@ -32,9 +32,26 @@ export default function Login() {
     try {
       await signIn(email.trim(), password);
       router.replace("/(tabs)/home");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Login failed");
-    } finally {
+    } catch (e: any) {
+  const message =
+    e?.response?.data?.detail ??
+    e?.message ??
+    "Login failed";
+
+  if (
+    message.toLowerCase().includes("verify your email")
+  ) {
+    router.push({
+      pathname: "/verify-email",
+      params: {
+        email: email.trim(),
+      },
+    });
+    return;
+  }
+
+  setError(message);
+} finally {
       setLoading(false);
     }
   };
@@ -120,7 +137,7 @@ export default function Login() {
             {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.btnText}>Log in</Text>}
           </Pressable>
 
-          <Pressable onPress={() => router.replace("/signup")} testID="switch-to-signup" style={styles.switch}>
+          <Pressable onPress={() => router.push("/signup")} testID="switch-to-signup" style={styles.switch}>
             <Text style={styles.switchText}>
               New here? <Text style={styles.switchLink}>Create an account</Text>
             </Text>

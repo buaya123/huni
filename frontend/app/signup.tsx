@@ -44,14 +44,20 @@ export default function SignUp() {
     if (password.length < 6) return setError("Password must be at least 6 characters.");
     setLoading(true);
     try {
-      await signUp({
+      const result = await signUp({
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         email: email.trim(),
         birthdate,
         password,
       });
-      router.replace("/(tabs)/home");
+
+      router.push({
+          pathname: "/verify-email",
+          params: {
+              email: result.email,
+          },
+      });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Sign up failed");
     } finally {
@@ -64,6 +70,7 @@ export default function SignUp() {
     setGoogleLoading(true);
     try {
       await signInWithGoogle();
+      router.replace("/");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Google sign in failed");
     } finally {
@@ -184,7 +191,7 @@ export default function SignUp() {
             {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.btnText}>Create account</Text>}
           </Pressable>
 
-          <Pressable onPress={() => router.replace("/login")} testID="switch-to-login" style={styles.switch}>
+          <Pressable onPress={() => router.push("/login")} testID="switch-to-login" style={styles.switch}>
             <Text style={styles.switchText}>
               Already have an account? <Text style={styles.switchLink}>Log in</Text>
             </Text>

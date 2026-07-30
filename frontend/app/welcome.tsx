@@ -71,14 +71,14 @@ export default function Welcome() {
         <Pressable
           testID="welcome-signup-btn"
           style={styles.primaryBtn}
-          onPress={() => router.replace("/signup")}
+          onPress={() => router.push("/signup")}
         >
           <Text style={styles.primaryBtnText}>Create account with email</Text>
         </Pressable>
         <Pressable
           testID="welcome-login-btn"
           style={styles.secondaryBtn}
-          onPress={() => router.replace("/login")}
+          onPress={() => router.push("/login")}
         >
           <Text style={styles.secondaryBtnText}>I already have an account</Text>
         </Pressable>

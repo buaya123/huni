@@ -449,20 +449,23 @@ export function CommentsSection({ targetId, header, commentsEnabled = true, canM
       /><View style={styles.container}>
       {commentsEnabled && (
         <Animated.View
-            style={[
-                styles.inputBar,
+    onLayout={(e) => {
+        setComposerHeight(e.nativeEvent.layout.height);
+    }}
+    style={[
+        styles.inputBar,
+        {
+            transform: [
                 {
-                    transform: [
-                        {
-                            translateY: Animated.multiply(
-                                keyboardOffset,
-                                -1
-                            ),
-                        },
-                    ],
+                    translateY: Animated.multiply(
+                        keyboardOffset,
+                        -1
+                    ),
                 },
-            ]}
-        >
+            ],
+        },
+    ]}
+>
           {replyTo && (
             <View style={styles.replyBanner} testID="reply-banner">
               <Text style={styles.replyBannerText} numberOfLines={1}>
@@ -550,10 +553,11 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
   },
-  authorPressable: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+ authorPressable: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: spacing.sm,
+},
 
   commentCollapseArea: {
     flex: 1,

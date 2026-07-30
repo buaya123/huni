@@ -10,18 +10,27 @@ import { AuthProvider } from "@/src/context/auth";
 import { WSProvider } from "@/src/context/ws";
 import { colors } from "@/src/theme/tokens";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { useState } from "react";
+import LaunchScreen from "./LaunchScreen";
 LogBox.ignoreAllLogs(true);
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
+  const [showLaunch, setShowLaunch] = useState(true);
 
-  useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded, error]);
+ useEffect(() => {
+  if (loaded || error) {
+    SplashScreen.hideAsync();
+
+    const timer = setTimeout(() => {
+      setShowLaunch(false);
+    }, 1800);
+
+    return () => clearTimeout(timer);
+  }
+}, [loaded, error]);
 
   if (!loaded && !error) return null;
 
@@ -31,8 +40,21 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <AuthProvider>
             <WSProvider>
-              <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
+              <StatusBar
+                  barStyle="dark-content"
+                  backgroundColor={colors.surface}
+                />
+
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: {
+                      backgroundColor: colors.surface,
+                    },
+                  }}
+                />
+
+                {showLaunch && <LaunchScreen />}
  
             </WSProvider>
           </AuthProvider>

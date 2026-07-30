@@ -42,6 +42,17 @@ from firebase_admin import credentials, auth as firebase_auth
 from pathlib import Path
 from routes import legal
 
+from email_service import (
+    generate_verification_code,
+    send_verification_email,
+)
+
+from verification_service import (
+    create_verification,
+    verify_code,
+    resend_verification,
+)
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -69,7 +80,11 @@ if not firebase_admin._apps:
 GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 print("ADMIN_EMAILS =", ADMIN_EMAILS)
-client = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(
+    MONGO_URL,
+    tz_aware=True,
+    tzinfo=timezone.utc,
+)
 db = client[DB_NAME]
 
 security = HTTPBearer(auto_error=False)
@@ -118,6 +133,7 @@ def decode_token(token: str) -> str:
         return payload["sub"]
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
 
 
 ADJECTIVES = [
@@ -426,6 +442,17 @@ class BioUpdate(BaseModel):
 class ScannerAssignInput(BaseModel):
     user_id: str
 
+class RegisterOut(BaseModel):
+    verification_required: bool
+    email: str
+
+class VerifyEmailIn(BaseModel):
+    email: EmailStr
+    code: str
+
+class ResendVerificationIn(BaseModel):
+    email: EmailStr
+
 
 # ---------- utility: sanitize user for public output ----------
 RANK_TITLES: List[Tuple[int, str]] = [
@@ -661,13 +688,121 @@ async def create_user(
         "joined_at": now().isoformat(),
         "alias_regens": 0,
         "last_alias_regen": None,
+        "email_verified": auth_provider != "password",
+        "email_verified_at": now().isoformat() if auth_provider != "password" else None,
     }
 
     await db.users.insert_one(user)
 
     return user
 
-@api.post("/auth/register", response_model=AuthOut)
+@api.post("/auth/verify-email", response_model=AuthOut)
+async def verify_email(body: VerifyEmailIn):
+
+    success, message, verification = await verify_code(
+        db=db,
+        email=body.email,
+        code=body.code,
+    )
+
+    if not success:
+
+        if message == "Verification code expired.":
+            raise HTTPException(
+                status_code=410,
+                detail=message,
+            )
+
+        if message == "Too many attempts.":
+            raise HTTPException(
+                status_code=429,
+                detail=message,
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=message,
+        )
+
+    user = await db.users.find_one({
+        "email": body.email.lower(),
+    })
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {
+                "email_verified": True,
+                "email_verified_at": now(),
+            }
+        },
+    )
+
+    user["email_verified"] = True
+    user["email_verified_at"] = now()
+
+    token = make_token(user["id"])
+
+    return AuthOut(
+        token=token,
+        user=public_user(user),
+    )
+
+
+@api.post("/auth/resend-verification")
+async def resend_email(body: ResendVerificationIn):
+
+    user = await db.users.find_one({
+        "email": body.email.lower()
+    })
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found."
+        )
+
+    if user.get("email_verified"):
+        raise HTTPException(
+            status_code=409,
+            detail="Email already verified."
+        )
+
+    success, message, code = await resend_verification(
+        db=db,
+        user_id=user["id"],
+        email=user["email"],
+    )
+
+    if not success:
+        if "Please wait" in message:
+            raise HTTPException(
+                status_code=429,
+                detail=message,
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=message,
+        )
+
+    send_verification_email(
+        user["email"],
+        code,
+    )
+
+    return {
+        "success": True
+    }
+
+
+@api.post("/auth/register", response_model=RegisterOut)
 async def register(inp: RegisterIn) -> AuthOut:
     email = inp.email.lower().strip()
 
@@ -689,12 +824,37 @@ async def register(inp: RegisterIn) -> AuthOut:
         auth_provider="password",
     )
 
-    token = make_token(user["id"])
-
-    return AuthOut(
-        token=token,
-        user=public_user(user),
+    code = await create_verification(
+        db=db,
+        user_id=user["id"],
+        email=user["email"],
     )
+
+    try:
+        print("CODE SENT TO EMAIL:", code)
+        send_verification_email(
+            user["email"],
+            code,
+        )
+    except Exception:
+            await db.users.delete_one({
+                "id": user["id"],
+            })
+
+            await db.email_verifications.delete_many({
+                "user_id": user["id"],
+                "purpose": "verify_email",
+            })
+
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to send verification email.",
+            )
+
+    return {
+        "verification_required": True,
+        "email": user["email"],
+    }
 
 
 @api.post("/auth/logout")
@@ -711,6 +871,11 @@ async def login(inp: LoginIn) -> AuthOut:
     user = await db.users.find_one({"email": email})
     if not user or not verify_pw(inp.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.get("email_verified", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email before logging in.",
+        )
     user = await maybe_promote_admin(user)
     await award_xp_once_per_day(user["id"], "daily_login", 5, "daily_login")
     fresh = await db.users.find_one({"id": user["id"]})

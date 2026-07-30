@@ -36,16 +36,22 @@ export type SignUpInput = {
   birthdate: string; // YYYY-MM-DD
 };
 
+export type RegisterResult = {
+  verification_required: boolean;
+  email: string;
+};
+
 type AuthState = {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (input: SignUpInput) => Promise<void>;
+  signUp: (input: SignUpInput) => Promise<RegisterResult>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
   regenerateAlias: () => Promise<User>;
   updateBio: (bio: string) => Promise<User>;
+  finishLogin: (token: string, user: User) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -91,23 +97,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap]);
 
 
+  const finishLogin = useCallback(
+    async (token: string, user: User) => {
+      await setToken(token);
+      setUser(user);
+    },
+    []
+  );
+
+
 
   const signIn = useCallback(async (email: string, password: string) => {
     const res = await api.post<{ token: string; user: User }>("/auth/login", { email, password });
     await setToken(res.token);
     setUser(res.user);
+    console.log("Google login complete");
   }, []);
 
   const signUp = useCallback(async (input: SignUpInput) => {
-    const res = await api.post<{ token: string; user: User }>("/auth/register", input);
-    await setToken(res.token);
-    setUser(res.user);
+    const res = await api.post<RegisterResult>(
+      "/auth/register",
+      input
+    );
+
+    return res;
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
   try {
     // Opens the Google account picker
     await GoogleSignin.hasPlayServices();
+    try {
+      await GoogleSignin.signOut();
+    } catch {
+      // Ignore if there isn't an active Google session.
+    }
 
     const response = await GoogleSignin.signIn();
 
@@ -185,6 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refresh,
         regenerateAlias,
         updateBio,
+        finishLogin
       }}
     >
       {children}

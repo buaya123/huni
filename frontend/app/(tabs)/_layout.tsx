@@ -6,6 +6,7 @@ import { useAuth } from "@/src/context/auth";
 import { useWS } from "@/src/context/ws";
 import { api } from "@/src/api/client";
 import { colors } from "@/src/theme/tokens";
+import { Redirect } from "expo-router";
 
 function Badge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -34,6 +35,10 @@ export default function TabsLayout() {
     }
   }, []);
 
+
+
+
+
   useEffect(() => {
     if (!user) return;
     refreshCounts();
@@ -47,11 +52,31 @@ export default function TabsLayout() {
     };
   }, [user, refreshCounts, subscribe]);
 
-  useEffect(() => {
-    if (!loading && !user) router.replace("/welcome");
-  }, [loading, user, router]);
+if (loading) {
+    return null;
+}
 
-  if (!user) return null;
+if (!user) {
+    return <Redirect href="/welcome" />;
+}
+  
+
+// useEffect(() => {
+//   if (loading) return;
+
+//   if (!user) {
+//     router.replace("/welcome");
+//     return;
+//   }
+
+//   if (!user.accepted_terms) {
+//     router.replace("/legal");
+//   }
+// }, [loading, user, router]);
+
+if (!user) {
+    return null;
+}
 
   return (
     <Tabs

@@ -30,8 +30,13 @@ export default function Login() {
     setLoading(true);
     setError(null);
     try {
-      await signIn(email.trim(), password);
-      router.replace("/(tabs)/home");
+      const user = await signIn(email.trim(), password);
+
+if (!user.accepted_terms) {
+  router.replace("/legal");
+} else {
+  router.replace("/");
+}
     } catch (e: any) {
   const message =
     e?.response?.data?.detail ??
@@ -72,7 +77,13 @@ export default function Login() {
               setError(null);
               setGoogleLoading(true);
               try {
-                await signInWithGoogle();
+                const user = await signInWithGoogle();
+
+                if (!user.accepted_terms) {
+                  router.replace("/legal");
+                } else {
+                  router.replace("/");
+                }
               } catch (e: unknown) {
                 setError(e instanceof Error ? e.message : "Google sign in failed");
               } finally {

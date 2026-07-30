@@ -539,6 +539,11 @@ def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
         "rank_title": rank["title"],
         "business_name": u.get("business_name", ""),
         "business_type": u.get("business_type", ""),
+
+        "accepted_terms": u.get("accepted_terms", False),
+        "accepted_terms_at": u.get("accepted_terms_at"),
+        "terms_version": u.get("terms_version", 1),
+        
     }
 
 
@@ -690,6 +695,9 @@ async def create_user(
         "last_alias_regen": None,
         "email_verified": auth_provider != "password",
         "email_verified_at": now().isoformat() if auth_provider != "password" else None,
+         "accepted_terms": False,
+        "accepted_terms_at": None,
+        "terms_version": 1,
     }
 
     await db.users.insert_one(user)
@@ -921,6 +929,30 @@ async def firebase_login(inp: FirebaseAuthIn) -> AuthOut:
 @api.get("/auth/me")
 async def me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     return public_user(user)
+
+@api.post("/legal/accept")
+async def accept_legal(
+    user=Depends(get_current_user),
+):
+    accepted_at = now().isoformat()
+
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {
+                "accepted_terms": True,
+                "accepted_terms_at": accepted_at,
+                "terms_version": 1,
+            }
+        },
+    )
+
+    return {
+        "success": True,
+        "accepted_terms": True,
+        "accepted_terms_at": accepted_at,
+        "terms_version": 1,
+    }
 
 
 @api.post("/auth/regenerate-alias")

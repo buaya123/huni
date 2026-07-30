@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { Platform } from "react-native";
+import { useRouter } from "expo-router";
 import { api, clearToken, getToken, setToken } from "@/src/api/client";
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { GoogleAuthProvider, signInWithCredential } from "firebase/auth";
@@ -26,6 +26,10 @@ export type User = {
   rank_title?: string;
   business_name?: string;
   business_type?: string;
+
+  accepted_terms?: boolean;
+accepted_terms_at?: string | null;
+terms_version?: number;
 };
 
 export type SignUpInput = {
@@ -44,9 +48,9 @@ export type RegisterResult = {
 type AuthState = {
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<User>;
   signUp: (input: SignUpInput) => Promise<RegisterResult>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<User>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
   regenerateAlias: () => Promise<User>;
@@ -64,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const bootstrappedRef = useRef(false);
-
+  const router = useRouter()
  
 
   const bootstrap = useCallback(async () => {
@@ -97,6 +101,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap]);
 
 
+  useEffect(() => {
+  console.log("AUTH USER =", user);
+}, [user]);
+
   const finishLogin = useCallback(
     async (token: string, user: User) => {
       await setToken(token);
@@ -111,7 +119,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await api.post<{ token: string; user: User }>("/auth/login", { email, password });
     await setToken(res.token);
     setUser(res.user);
-    console.log("Google login complete");
+        console.log("Google login complete");
+    return res.user;
+
   }, []);
 
   const signUp = useCallback(async (input: SignUpInput) => {
@@ -123,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res;
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (): Promise<User> => {
   try {
     // Opens the Google account picker
     await GoogleSignin.hasPlayServices();
@@ -161,20 +171,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
     // Save Huni JWT
     await setToken(res.token);
-    setUser(res.user);
+  setUser(res.user);
 
-  } catch (err) {
+  return res.user;
+
+} catch (err) {
     console.error("Google Sign-In failed:", err);
     throw err;
   }
 }, []);
   
 
-  const signOut = useCallback(async () => {
-    try { await api.post("/auth/logout"); } catch { /* ignore */ }
-    await clearToken();
-    setUser(null);
-  }, []);
+const signOut = useCallback(async () => {
+  console.log("Signing out...");
+
+  try {
+    await api.post("/auth/logout");
+  } catch {}
+
+  await clearToken();
+
+  console.log("Before setUser:", user);
+
+  setUser(null);
+  router.replace("/welcome")
+  console.log("After setUser called");
+}, [user]);
 
   const refresh = useCallback(async () => {
     try {

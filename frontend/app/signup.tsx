@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/auth";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
+import { api } from "@/src/api/client";
 
 function formatDate(input: string): string {
   // Auto-format YYYY-MM-DD as the user types digits
@@ -65,18 +66,24 @@ export default function SignUp() {
     }
   };
 
-  const google = async () => {
-    setError(null);
-    setGoogleLoading(true);
-    try {
-      await signInWithGoogle();
+const google = async () => {
+  setError(null);
+  setGoogleLoading(true);
+
+  try {
+    const user = await signInWithGoogle();
+
+    if (!user.accepted_terms) {
+      router.replace("/legal");
+    } else {
       router.replace("/");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Google sign in failed");
-    } finally {
-      setGoogleLoading(false);
     }
-  };
+  } catch (e: unknown) {
+    setError(e instanceof Error ? e.message : "Google sign in failed");
+  } finally {
+    setGoogleLoading(false);
+  }
+};
 
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "bottom"]}>

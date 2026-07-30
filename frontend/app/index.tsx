@@ -1,17 +1,20 @@
 import { Redirect } from "expo-router";
 import { useAuth } from "@/src/context/auth";
-import LaunchScreen from "./LaunchScreen";
 
 export default function Index() {
   const { user, loading } = useAuth();
 
   if (loading) {
-  return null;
-}
+    return null;
+  }
 
-if (!user) {
-  return <Redirect href="/welcome" />;
-}
+  if (!user) {
+    return <Redirect href="/welcome" />;
+  }
 
-return <Redirect href="/(tabs)/home" />;
+  if (!user.accepted_terms) {
+    return <Redirect href="/legal" />;
+  }
+
+  return <Redirect href="/(tabs)/home" />;
 }

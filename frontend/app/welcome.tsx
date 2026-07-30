@@ -12,15 +12,18 @@ export default function Welcome() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
- const google = async () => {
+const google = async () => {
   setError(null);
   setGoogleLoading(true);
 
   try {
-    await signInWithGoogle();
+    const user = await signInWithGoogle();
 
-    router.replace("/");
-
+    if (!user.accepted_terms) {
+      router.replace("/legal");
+    } else {
+      router.replace("/");
+    }
   } catch (e: unknown) {
     setError(e instanceof Error ? e.message : "Google sign in failed");
   } finally {

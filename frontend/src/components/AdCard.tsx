@@ -35,28 +35,28 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
   useEffect(() => {
     if (!trackImpression || trackedRef.current) return;
     trackedRef.current = true;
-    api.post(`/ads/${ad.id}/impression`).catch(() => {});
+    api.post(`/ads/${ad.ad_id}/impression`).catch(() => {});
   }, [ad.id, trackImpression]);
 
   const onLearnMore = async () => {
     try {
-      const res = await api.post<{ link_url?: string | null }>(`/ads/${ad.id}/click`);
+      const res = await api.post<{ link_url?: string | null }>(`/ads${ad.ad_id}/click`);
       if (res.link_url) Linking.openURL(res.link_url);
     } catch { /* ignore */ }
   };
 
   const openDetail = () => {
-    if (isFeed) router.push(`/ad/${ad.id}`);
+    if (isFeed) router.push(`/ad/${ad.ad_id}`);
   };
 
   return (
-    <Pressable style={styles.card} onPress={openDetail} disabled={!isFeed} testID={`ad-card-${ad.id}`}>
+    <Pressable style={styles.card} onPress={openDetail} disabled={!isFeed} testID={`ad-card-${ad.ad_id}`}>
       <View style={styles.head}>
         <View style={styles.bizAvatar}>
           <Ionicons name="storefront" size={16} color={colors.brand} />
         </View>
         <Text style={styles.bizName} numberOfLines={1}>{ad.business_name}</Text>
-        <View style={styles.sponsoredPill} testID={`ad-sponsored-${ad.id}`}>
+        <View style={styles.sponsoredPill} testID={`ad-sponsored-${ad.ad_id}`}>
           <Text style={styles.sponsoredText}>Sponsored</Text>
         </View>
       </View>
@@ -68,13 +68,13 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
 
       <View style={styles.footer}>
         {!!ad.link_url && (
-          <Pressable style={styles.ctaBtn} onPress={onLearnMore} testID={`ad-learn-more-${ad.id}`}>
+          <Pressable style={styles.ctaBtn} onPress={onLearnMore} testID={`ad-learn-more-${ad.ad_id}`}>
             <Text style={styles.ctaText}>Learn more</Text>
             <Ionicons name="open-outline" size={14} color="#FFF" />
           </Pressable>
         )}
         {ad.comments_enabled && (
-          <Pressable style={styles.commentPill} onPress={openDetail} disabled={!isFeed} testID={`ad-comments-${ad.id}`}>
+          <Pressable style={styles.commentPill} onPress={openDetail} disabled={!isFeed} testID={`ad-comments-${ad.ad_id}`}>
             <Ionicons name="chatbubble-outline" size={14} color={colors.muted} />
             <Text style={styles.commentText}>{ad.comment_count}</Text>
           </Pressable>

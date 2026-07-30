@@ -4,6 +4,10 @@ FastAPI + MongoDB (motor). JWT auth with bcrypt password hashing.
 WebSockets for realtime chat + notifications.
 """
 from __future__ import annotations
+import os
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
 
 import asyncio
 import base64
@@ -14,6 +18,9 @@ import uuid
 from datetime import datetime, timedelta, timezone, time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 import httpx
 import jwt
@@ -42,6 +49,8 @@ from firebase_admin import credentials, auth as firebase_auth
 from pathlib import Path
 from routes import legal
 
+from core.security import SecurityHeadersMiddleware
+
 from email_service import (
     generate_verification_code,
     send_verification_email,
@@ -53,6 +62,18 @@ from verification_service import (
     resend_verification,
 )
 
+from core.rate_limit import limiter
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+
+from core.image_processor import (
+    process_image,
+    InvalidImage,
+)
+
+from bson.binary import Binary
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -63,6 +84,8 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ["JWT_ALGORITHM"]
 JWT_EXPIRE_DAYS = int(os.environ["JWT_EXPIRE_DAYS"])
 
+if not JWT_SECRET:
+    raise RuntimeError("SECRET_KEY is not configured.")
 
 FIREBASE_KEY = Path(__file__).parent / "serviceAccountKey.json"
 
@@ -71,15 +94,15 @@ if not firebase_admin._apps:
         try:
             cred = credentials.Certificate(str(FIREBASE_KEY))
             firebase_admin.initialize_app(cred)
-            print("🔥 Firebase Admin initialized")
+
         except Exception as _e:
-            print(f"⚠️ Firebase Admin init skipped: {_e}")
-    else:
-        print("⚠️ Firebase Admin skipped (serviceAccountKey.json not found)")
+            pass
+
+
 
 GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
-print("ADMIN_EMAILS =", ADMIN_EMAILS)
+
 client = AsyncIOMotorClient(
     MONGO_URL,
     tz_aware=True,
@@ -89,13 +112,28 @@ db = client[DB_NAME]
 
 security = HTTPBearer(auto_error=False)
 
-app = FastAPI(title="Huni API")
+app = FastAPI(
+    title="Huni API",
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
+
 api = APIRouter(prefix="/api")
 
 app.include_router(legal.router)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler
+)
+app.add_middleware(SecurityHeadersMiddleware)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("huni")
+
+
 
 
 # ---------- helpers ----------
@@ -177,6 +215,7 @@ async def get_current_user(
             token,
             JWT_SECRET,
             algorithms=[JWT_ALGORITHM],
+            options={"verify_exp": False}
         )
 
         user_id = payload["sub"]
@@ -259,7 +298,10 @@ class CommentCreate(BaseModel):
 
 class UploadIn(BaseModel):
     data: str  # base64-encoded image (raw or data URI)
-    content_type: str = Field(default="image/jpeg", pattern="^image/(jpeg|png|webp|gif)$")
+    content_type: str = Field(
+        default="image/jpeg",
+        pattern="^image/(jpeg|png)$",
+    )
 
 
 class AdCreate(BaseModel):
@@ -471,6 +513,21 @@ RANK_TITLES: List[Tuple[int, str]] = [
 # Base XP thresholds for levels 1-10 as specified
 _BASE_RANK_THRESHOLDS: List[int] = [0, 100, 250, 450, 700, 1000, 1400, 1900, 2500, 3200]
 
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled exception during %s %s",
+        request.method,
+        request.url.path,
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error."
+        },
+    )
 
 def _build_rank_thresholds(max_level: int = 100) -> List[int]:
     """Cumulative XP required to reach each level index (0-based). +15% per level after level 10."""
@@ -811,7 +868,8 @@ async def resend_email(body: ResendVerificationIn):
 
 
 @api.post("/auth/register", response_model=RegisterOut)
-async def register(inp: RegisterIn) -> AuthOut:
+@limiter.limit("5/minute")
+async def register(request:Request,inp: RegisterIn) -> AuthOut:
     email = inp.email.lower().strip()
 
     existing = await db.users.find_one({"email": email}, {"_id": 1})
@@ -839,7 +897,6 @@ async def register(inp: RegisterIn) -> AuthOut:
     )
 
     try:
-        print("CODE SENT TO EMAIL:", code)
         send_verification_email(
             user["email"],
             code,
@@ -874,7 +931,8 @@ async def logout(authorization: Optional[str] = Header(default=None)) -> Dict[st
 
 
 @api.post("/auth/login", response_model=AuthOut)
-async def login(inp: LoginIn) -> AuthOut:
+@limiter.limit("5/minute")
+async def login(request:Request,inp: LoginIn) -> AuthOut:
     email = inp.email.lower().strip()
     user = await db.users.find_one({"email": email})
     if not user or not verify_pw(inp.password, user["password"]):
@@ -891,7 +949,8 @@ async def login(inp: LoginIn) -> AuthOut:
     return AuthOut(token=token, user=public_user(fresh or user))
 
 @api.post("/auth/firebase", response_model=AuthOut)
-async def firebase_login(inp: FirebaseAuthIn) -> AuthOut:
+@limiter.limit("5/minute")
+async def firebase_login(request:Request,inp: FirebaseAuthIn) -> AuthOut:
     try:
         decoded = firebase_auth.verify_id_token(inp.id_token)
     except Exception:
@@ -1017,7 +1076,9 @@ async def _hydrate_post(p: Dict[str, Any], viewer_id: Optional[str]) -> Dict[str
 
 
 @api.post("/posts")
+@limiter.limit("20/hour")
 async def create_post(
+    request:Request,
     inp: PostCreate,
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -1193,7 +1254,8 @@ async def delete_post(post_id: str, user: Dict[str, Any] = Depends(get_current_u
 
 
 @api.post("/posts/{post_id}/react")
-async def react_post(post_id: str, inp: ReactionIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+@limiter.limit("300/hour")
+async def react_post(request:Request,post_id: str, inp: ReactionIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     p = await db.posts.find_one({"id": post_id})
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -1303,46 +1365,82 @@ async def my_bookmarks(
 
 
 # ---------- routes: image uploads ----------
-MAX_IMAGE_B64_LEN = 8 * 1024 * 1024  # ~6MB binary
+MAX_IMAGE_B64_LEN = 20 * 1024 * 1024 
 
 
 @api.post("/uploads")
-async def upload_image(inp: UploadIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, str]:
+async def upload_image(
+    inp: UploadIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, str]:
+
     data = inp.data
-    if "," in data and data.strip().startswith("data:"):
+
+    # Remove data URI prefix if present
+    if data.startswith("data:") and "," in data:
         data = data.split(",", 1)[1]
+
     if len(data) > MAX_IMAGE_B64_LEN:
-        raise HTTPException(status_code=413, detail="Image too large")
+        raise HTTPException(
+            status_code=413,
+            detail="Image too large",
+        )
+
     try:
-        base64.b64decode(data[:100], validate=True)
+        processed = process_image(data)
+    except InvalidImage as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid image data")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process image.",
+        )
+
     image_id = new_id()
+
     await db.images.insert_one({
         "id": image_id,
         "owner_id": user["id"],
-        "data": data,
-        "content_type": inp.content_type,
+        "data": Binary(processed.data),
+        "width": processed.width,
+        "height": processed.height,
+        "size": processed.size_bytes,
+        "format": "webp",
         "created_at": now().isoformat(),
     })
+
     return {"id": image_id}
 
 
 @api.get("/images/{image_id}")
 async def get_image(image_id: str) -> Response:
     img = await db.images.find_one({"id": image_id})
-    if not img:
-        raise HTTPException(status_code=404, detail="Image not found")
-    try:
-        content = base64.b64decode(img["data"])
-    except Exception:
-        raise HTTPException(status_code=500, detail="Corrupt image")
-    return Response(
-        content=content,
-        media_type=img.get("content_type", "image/jpeg"),
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
 
+    if not img:
+        raise HTTPException(
+            status_code=404,
+            detail="Image not found",
+        )
+
+    image_data = img.get("data")
+
+    if not image_data:
+        raise HTTPException(
+            status_code=500,
+            detail="Corrupt image",
+        )
+
+    return Response(
+        content=bytes(image_data),
+        media_type="image/webp",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": image_id,
+        },
+    )
 
 # ---------- routes: ads ----------
 def _hydrate_ad(a: Dict[str, Any], feed_key: str | None = None) -> Dict[str, Any]:
@@ -1888,7 +1986,9 @@ def _parse_qr_code(code: str) -> str:
 
 
 @api.post("/partner/scan")
+@limiter.limit("20/minute")
 async def partner_scan(
+    request:Request,
     inp: PartnerScanIn,
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -1989,7 +2089,8 @@ async def partner_scan(
     }
 
 @api.post("/partner/redeem")
-async def partner_redeem(inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+@limiter.limit("20/minute")
+async def partner_redeem(request:Request,inp: PartnerRedeemIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Apply a campaign to a user (one-shot per user per campaign)."""
     partner = user
 
@@ -2347,10 +2448,6 @@ async def scanner_partners(
             "scanners": 1,
         },
     ).to_list(50)
-
-    print("========== SCANNER PARTNERS ==========")
-    print(partners)
-    print("======================================")
 
     return [
         {
@@ -2871,7 +2968,8 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
 
 
 @api.post("/posts/{post_id}/comments")
-async def create_comment(post_id: str, inp: CommentCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+@limiter.limit("60/hour")
+async def create_comment(request:Request,post_id: str, inp: CommentCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     is_ad = False
     p = await db.posts.find_one({"id": post_id})
     if not p:
@@ -3499,16 +3597,21 @@ async def seed_data() -> Dict[str, Any]:
 
 
 # ---------- app wiring ----------
-print("========== ROUTES ==========")
-for r in api.routes:
-    print(type(r).__name__, r.path)
-print("============================")
+
+
 app.include_router(api)
+
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -3569,7 +3672,7 @@ async def on_startup() -> None:
             [{"$set": {"exp_awarded": {"$ifNull": ["$points_awarded", 0]}, "tokens_awarded": 0}}],
         )
     except Exception as _mig:  # noqa: BLE001
-        print(f"⚠️ economy migration skipped: {_mig}")
+        pass
 
     # Seed a few mock appearance store items (idempotent — only if none exist for that subcategory).
     try:
@@ -3605,7 +3708,7 @@ async def on_startup() -> None:
                 "created_at": now().isoformat(),
             })
     except Exception as _seed:  # noqa: BLE001
-        print(f"⚠️ store seed skipped: {_seed}")
+        pass
 
     # promote configured admin emails
     if ADMIN_EMAILS:

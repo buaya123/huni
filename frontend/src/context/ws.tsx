@@ -42,11 +42,9 @@ export function WSProvider({ children }: { children: React.ReactNode }) {
 
         wsRef.current = socket;
         socket.onopen = () => {
-          console.log("🟢 WebSocket Connected");
           setConnected(true);
         };
         socket.onclose = (e) => {
-          console.log("🔴 WebSocket Closed", e.code, e.reason);
           setConnected(false);
 
           if (!stoppedRef.current) {
@@ -57,13 +55,12 @@ export function WSProvider({ children }: { children: React.ReactNode }) {
           // let onclose handle reconnect
         };
         socket.onmessage = (ev) => {
-          console.log("📩 WS EVENT", ev.data);
 
           try {
               const parsed = JSON.parse(ev.data);
               listenersRef.current.forEach((l) => l(parsed));
           } catch (err) {
-              console.log(err);
+
           }
       };
       } catch {

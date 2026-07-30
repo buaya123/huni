@@ -357,7 +357,7 @@ toggleBookmark: async (postId) => {
 },
 
 votePulse: async (postId, index) => {
-    console.log("vote", postId, index);
+    //console.log("vote", postId, index);
 },
 
 loadPost: async (postId) => {

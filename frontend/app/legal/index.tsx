@@ -43,7 +43,7 @@ const accept = async () => {
     await refresh();
     router.replace("/");
   } catch (err) {
-    console.error(err);
+
   } finally {
     setLoading(false);
   }

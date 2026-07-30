@@ -4,9 +4,3 @@ uri = "mongodb://huniadmin:uW7BU4gNWmwLNhTo@ac-hpqabnc-shard-00-00.vznqds6.mongo
 
 client = MongoClient(uri, serverSelectionTimeoutMS=5000)
 
-try:
-    print(client.admin.command("ping"))
-    print("✅ Connected successfully!")
-except Exception as e:
-    print("❌ Connection failed:")
-    print(e)

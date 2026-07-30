@@ -101,9 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap]);
 
 
-  useEffect(() => {
-  console.log("AUTH USER =", user);
-}, [user]);
+
 
   const finishLogin = useCallback(
     async (token: string, user: User) => {
@@ -119,7 +117,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await api.post<{ token: string; user: User }>("/auth/login", { email, password });
     await setToken(res.token);
     setUser(res.user);
-        console.log("Google login complete");
     return res.user;
 
   }, []);
@@ -176,14 +173,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return res.user;
 
 } catch (err) {
-    console.error("Google Sign-In failed:", err);
+
     throw err;
   }
 }, []);
   
 
 const signOut = useCallback(async () => {
-  console.log("Signing out...");
+
 
   try {
     await api.post("/auth/logout");
@@ -191,11 +188,9 @@ const signOut = useCallback(async () => {
 
   await clearToken();
 
-  console.log("Before setUser:", user);
 
   setUser(null);
   router.replace("/welcome")
-  console.log("After setUser called");
 }, [user]);
 
   const refresh = useCallback(async () => {

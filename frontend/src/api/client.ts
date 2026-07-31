@@ -55,7 +55,7 @@ export const api = {
   get: <T>(p: string) => request<T>(p),
   post: <T>(p: string, body?: unknown) => request<T>(p, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(p: string, body?: unknown) => request<T>(p, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
-  del: <T>(p: string) => request<T>(p, { method: "DELETE" }),
+  del: <T>(p: string, body?: unknown) => request<T>(p, { method: "DELETE", body: body ? JSON.stringify(body) : undefined }),
 };
 
 export function imageUrl(id: string): string {

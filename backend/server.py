@@ -273,6 +273,8 @@ async def get_current_user(
         if user:
             if user.get("status") == "banned":
                 raise HTTPException(status_code=403, detail="Account suspended")
+            if user.get("status") == "deleted":
+                raise HTTPException(status_code=401, detail="Account no longer exists")
             return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -301,6 +303,8 @@ async def get_current_user(
             if user:
                 if user.get("status") == "banned":
                     raise HTTPException(status_code=403, detail="Account suspended")
+                if user.get("status") == "deleted":
+                    raise HTTPException(status_code=401, detail="Account no longer exists")
                 return user
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -1287,6 +1291,130 @@ async def update_bio(inp: BioUpdate, user: Dict[str, Any] = Depends(get_current_
     await db.users.update_one({"id": user["id"]}, {"$set": {"bio": inp.bio.strip()}})
     updated = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
     return public_user(updated)
+
+
+class DeleteAccountIn(BaseModel):
+    password: Optional[str] = Field(default=None, max_length=128)
+    confirmation: str = Field(min_length=1, max_length=32)
+
+
+@api.delete("/users/me")
+@limiter.limit("3/hour")
+async def delete_my_account(
+    request: Request,
+    inp: DeleteAccountIn,
+    authorization: Optional[str] = Header(default=None),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, str]:
+    """Permanently delete the current account.
+
+    Safeguards:
+      • Must send `confirmation == "DELETE"` (case-sensitive).
+      • Password-auth users must send their current password.
+      • Google-auth users only need the confirmation string.
+      • Rate limited to 3 attempts per hour per user.
+
+    Effects (soft delete of the user record; hard delete of owned media):
+      • users → status="deleted", PII scrubbed, password cleared, tokens=0, exp=0
+      • posts / comments authored by user → status="deleted_by_user"
+      • images / bookmarks / blocks / sessions / notifications → hard delete
+      • JWT & Google sessions revoked
+    """
+    if inp.confirmation != "DELETE":
+        raise HTTPException(
+            status_code=422,
+            detail='You must type "DELETE" exactly to confirm.',
+        )
+
+    auth_provider = user.get("auth_provider", "password")
+    if auth_provider == "password":
+        if not inp.password:
+            raise HTTPException(
+                status_code=422,
+                detail="Password is required to delete your account.",
+            )
+        # get_current_user strips the password hash — re-fetch it here.
+        secret_doc = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 1})
+        stored = (secret_doc or {}).get("password") or ""
+        if not stored or not verify_pw(inp.password, stored):
+            await register_failed_login(db, f"delete:{user['id']}")
+            raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    uid = user["id"]
+    now_iso = now().isoformat()
+    tombstone_email = f"deleted-{uid}@huni.deleted"
+
+    # 1) Scrub the user document (soft delete)
+    await db.users.update_one(
+        {"id": uid},
+        {
+            "$set": {
+                "status": "deleted",
+                "deleted_at": now_iso,
+                "email": tombstone_email,
+                "password": "",
+                "first_name": "",
+                "last_name": "",
+                "bio": "",
+                "picture": "",
+                "birthdate": "",
+                "google_sub": None,
+                "firebase_uid": None,
+                "business_name": "",
+                "business_type": "",
+                "tokens": 0,
+                "exp": 0,
+                "role": "user",
+            }
+        },
+    )
+
+    # 2) Mark authored posts + comments deleted
+    await db.posts.update_many(
+        {"author_id": uid, "status": {"$ne": "deleted_by_admin"}},
+        {"$set": {"status": "deleted_by_user", "deleted_at": now_iso}},
+    )
+    await db.comments.update_many(
+        {"author_id": uid, "status": {"$ne": "deleted_by_admin"}},
+        {"$set": {"status": "deleted_by_user", "deleted_at": now_iso}},
+    )
+
+    # 3) Hard delete owned media and personal data
+    await db.images.delete_many({"owner_id": uid})
+    await db.bookmarks.delete_many({"user_id": uid})
+    await db.blocks.delete_many({"$or": [{"blocker_id": uid}, {"target_user_id": uid}]})
+    await db.notifications.delete_many({"user_id": uid})
+    await db.email_verifications.delete_many({"user_id": uid})
+    await db.user_sessions.delete_many({"user_id": uid})
+    await db.login_attempts.delete_many({"key": f"email:{user.get('email', '').lower()}"})
+
+    # 4) Revoke the current JWT (if the caller used one)
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = jwt.decode(
+                token,
+                JWT_SECRET,
+                algorithms=[JWT_ALGORITHM],
+                options={"verify_exp": False},
+            )
+            jti = payload.get("jti") or token[-24:]
+            exp = payload.get("exp")
+            expires_at = (
+                datetime.fromtimestamp(exp, tz=timezone.utc)
+                if isinstance(exp, (int, float))
+                else now() + timedelta(days=JWT_EXPIRE_DAYS)
+            )
+            await db.revoked_tokens.update_one(
+                {"jti": jti},
+                {"$set": {"jti": jti, "expires_at": expires_at}},
+                upsert=True,
+            )
+        except jwt.PyJWTError:
+            pass
+
+    logger.info("Account deleted: %s (provider=%s)", uid, auth_provider)
+    return {"status": "deleted"}
 
 
 # ---------- routes: posts ----------

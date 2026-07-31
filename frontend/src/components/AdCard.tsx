@@ -40,8 +40,15 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
 
   const onLearnMore = async () => {
     try {
-      const res = await api.post<{ link_url?: string | null }>(`/ads${ad.ad_id}/click`);
-      if (res.link_url) Linking.openURL(res.link_url);
+      const res = await api.post<{ link_url?: string | null }>(`/ads/${ad.ad_id}/click`);
+      const url = res.link_url;
+      if (!url) return;
+      // Only allow http/https — refuse javascript:, intent:, file:, tel:, sms: etc.
+      const safe = /^https?:\/\//i.test(url);
+      if (!safe) return;
+      const supported = await Linking.canOpenURL(url).catch(() => false);
+      if (!supported) return;
+      await Linking.openURL(url);
     } catch { /* ignore */ }
   };
 

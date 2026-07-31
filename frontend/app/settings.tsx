@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { UserRepository } from "@/src/repositories/UserRepository";
 import { useAuth } from "@/src/context/auth";
 import { Avatar } from "@/src/components/Avatar";
+import { DeleteAccountModal } from "@/src/components/DeleteAccountModal";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 
 import type { BlockRow } from "@/src/types/user";
@@ -15,6 +16,8 @@ export default function Settings() {
   const { user, signOut } = useAuth();
   const [blocks, setBlocks] = useState<BlockRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dangerOpen, setDangerOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -155,8 +158,62 @@ export default function Settings() {
           <Text style={styles.logoutText}>Log out</Text>
         </Pressable>
 
+        {/*
+          Danger zone — deliberately hidden behind an explicit toggle so users
+          can't hit "Delete account" by accident. Long-press OR tap the reveal
+          row to expand.
+        */}
+        <View style={styles.dangerSection}>
+          <Pressable
+            onPress={() => setDangerOpen((v) => !v)}
+            onLongPress={() => setDangerOpen(true)}
+            delayLongPress={600}
+            style={styles.dangerToggle}
+            testID="danger-zone-toggle"
+            accessibilityRole="button"
+            accessibilityLabel={dangerOpen ? "Hide danger zone" : "Show danger zone"}
+            hitSlop={8}
+          >
+            <Ionicons
+              name={dangerOpen ? "chevron-down-outline" : "chevron-forward-outline"}
+              size={14}
+              color={colors.muted}
+            />
+            <Text style={styles.dangerToggleText}>
+              {dangerOpen ? "Hide danger zone" : "Show danger zone"}
+            </Text>
+          </Pressable>
+
+          {dangerOpen && (
+            <View style={styles.dangerBody} testID="danger-zone-body">
+              <View style={styles.dangerHeader}>
+                <Ionicons name="warning-outline" size={16} color={colors.error} />
+                <Text style={styles.dangerHeaderText}>Danger zone</Text>
+              </View>
+              <Text style={styles.dangerCopy}>
+                Deleting your account is permanent. Your posts, comments, images,
+                bookmarks and rewards balance will be removed.
+              </Text>
+              <Pressable
+                style={styles.deleteBtn}
+                onPress={() => setDeleteModalOpen(true)}
+                testID="settings-delete-account-btn"
+                accessibilityLabel="Delete my account"
+              >
+                <Ionicons name="trash-outline" size={18} color={colors.error} />
+                <Text style={styles.deleteBtnText}>Delete my account</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
         <Text style={styles.footer}>Huni · Whisper honestly · Buug, Zamboanga Sibugay</Text>
       </ScrollView>
+
+      <DeleteAccountModal
+        visible={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -203,5 +260,61 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   logoutText: { color: colors.error, fontWeight: "700", fontSize: font.base },
+  dangerSection: {
+    marginTop: spacing.xl,
+    gap: spacing.sm,
+  },
+  dangerToggle: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    minHeight: 36,
+  },
+  dangerToggleText: {
+    color: colors.muted,
+    fontSize: font.sm,
+    fontWeight: "600",
+  },
+  dangerBody: {
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.35)",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    backgroundColor: "rgba(239,68,68,0.04)",
+    gap: spacing.sm,
+  },
+  dangerHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dangerHeaderText: {
+    color: colors.error,
+    fontWeight: "800",
+    fontSize: font.base,
+    letterSpacing: 0.3,
+  },
+  dangerCopy: {
+    color: colors.onSurfaceTertiary,
+    fontSize: font.sm,
+    lineHeight: 20,
+  },
+  deleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: "transparent",
+    minHeight: 44,
+  },
+  deleteBtnText: {
+    color: colors.error,
+    fontWeight: "800",
+    fontSize: font.base,
+  },
   footer: { textAlign: "center", color: colors.muted, fontSize: font.sm, marginTop: spacing.lg },
 });

@@ -458,15 +458,104 @@ backend:
         comment: "✅ PASS - Tested backward compatibility: (1) POST /posts still awards XP (+15 verified) ✓, (2) GET /me/economy returns correct structure with exp, tokens, rank ✓. No regression in existing XP/economy flows."
 
 metadata:
-  test_sequence: 14
-  run_ui: false
+  test_sequence: 15
+  run_ui: true
 
 test_plan:
   current_focus:
-    - "Iteration 11 — Backend security audit + hardening"
+    - "Iteration 12 — Delete account (backend endpoint + UI) + frontend hardening"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+## Iteration 12 — Delete account + frontend security touch-ups (July 2026)
+
+### Backend
+- **NEW `DELETE /api/users/me`** — permanently deletes the current account.
+  - Body: `{ "password": "...", "confirmation": "DELETE" }`.
+  - Requires exact confirmation string `"DELETE"` (422 otherwise).
+  - Password-auth users must supply their current password (401 otherwise); Google-auth users only need the confirmation.
+  - Soft-deletes the user (`status="deleted"`, PII scrubbed, tokens/exp=0, email → `deleted-<uuid>@huni.deleted`).
+  - Cascades: authored posts/comments → `deleted_by_user`; images/bookmarks/blocks/notifications/sessions hard-deleted; current JWT revoked; login-attempt records cleared.
+  - Rate limit `3/hour`.
+- `get_current_user` now rejects `status="deleted"` (401 "Account no longer exists").
+
+### Frontend
+- **New `DeleteAccountModal`** (`src/components/DeleteAccountModal.tsx`) — full-screen modal:
+  - Shows what will be deleted (4-bullet list).
+  - Requires typing `DELETE` exactly.
+  - Password input for password-auth users (hidden for Google-auth users).
+  - `Delete forever` button stays disabled until all guards pass; shows spinner during submit.
+- **Settings screen** now has a collapsed "Danger zone" at the bottom:
+  - Tap OR long-press `Show danger zone` → reveals red-bordered card.
+  - Only inside the card is the `Delete my account` button, which opens the modal.
+- `AuthContext.deleteAccount` — new async action that calls `DELETE /users/me`, clears the token, and routes to `/welcome`.
+- API client `api.del` now accepts an optional body.
+
+### Frontend vulnerability fixes
+- **`AdCard.onLearnMore` — URL scheme allow-listed.** External advertiser link is now opened only if it matches `^https?://` AND `Linking.canOpenURL` reports it's supported. Prevents `javascript:`, `intent:`, `file:`, `tel:`, `sms:` abuse from advertiser-controlled `link_url`.
+- **`AdCard` click endpoint typo fixed.** Was `POST /ads${ad.ad_id}/click` (missing slash) → tracking was silently broken. Now `POST /ads/${ad.ad_id}/click`.
+
+### Audit notes (no fixes required)
+- Token storage uses `expo-secure-store` on native (Keychain / EncryptedSharedPreferences); on web falls back to AsyncStorage (documented, acceptable for MVP).
+- `+html.tsx` uses `dangerouslySetInnerHTML` for CSS only (no user-controlled data) — safe.
+- No `console.log` of tokens/passwords/secrets found in repo.
+- All `process.env` reads are `EXPO_PUBLIC_*` (public by design; Firebase apiKey/config are safe to publish per Firebase docs).
+- Backend URL loaded from env, not hardcoded HTTP.
+
+backend:
+  - task: "DELETE /api/users/me — permanent account deletion with double confirmation"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New endpoint. Requires `confirmation:DELETE` (422 otherwise). For password auth also requires `password` (401 on mismatch). Soft-deletes user, cascades to posts/comments/images/bookmarks/blocks/sessions/notifications, revokes JWT. Rate limited 3/hour. Locally verified: full happy path returns {status:deleted}, subsequent /auth/me returns 401, re-login returns 401, tombstone record confirmed in Mongo with password/PII scrubbed."
+
+  - task: "get_current_user rejects status=deleted"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Both JWT and Google-session branches now return 401 'Account no longer exists' if the user record has status=deleted."
+
+frontend:
+  - task: "Delete-account UI on Settings screen"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/settings.tsx, frontend/src/components/DeleteAccountModal.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Danger zone is collapsed by default. User must tap or long-press 'Show danger zone', then tap 'Delete my account', then in the modal type DELETE and (for password users) enter their current password. Delete button is disabled until both fields validate. Modal test IDs: danger-zone-toggle, danger-zone-body, settings-delete-account-btn, delete-account-modal, delete-confirm-input, delete-password-input, delete-confirm-btn, delete-cancel-btn."
+
+  - task: "AdCard external URL scheme allowlist + click endpoint fix"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/AdCard.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Fixed missing slash in `/ads${id}/click` and gated Linking.openURL behind ^https?:// regex + Linking.canOpenURL. Prevents dangerous schemes and fixes broken click tracking."
+
+agent_communication:
+  - agent: "main"
+    message: "Iteration 12 focuses on account deletion. Backend endpoint DELETE /api/users/me implemented + verified locally. Frontend adds a hidden 'Danger zone' collapsible section on /settings with a confirmation modal (requires typing DELETE + password). Please run: (1) full delete flow — create a fresh password user (bypass email via db), login, delete with wrong confirmation → 422, wrong password → 401, correct → 200 {status:deleted}, subsequent /auth/me → 401, re-login → 401; (2) confirm Mongo tombstone (email prefixed 'deleted-', password/PII cleared); (3) confirm cascades (create post/comment/image/bookmark first, then delete and check they're removed/marked); (4) confirm 3/hour rate limit; (5) frontend UI: navigate to /settings, confirm danger zone is collapsed, expand it, open the modal, verify Delete button stays disabled until DELETE+password are entered, cancel closes, valid delete redirects to /welcome; (6) verify AdCard 'Learn more' now hits /ads/<id>/click (regression: check the ad_events collection increments)."
 
 ## Iteration 11 — Backend security audit + hardening (July 2026)
 

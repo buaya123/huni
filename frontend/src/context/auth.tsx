@@ -52,6 +52,7 @@ type AuthState = {
   signUp: (input: SignUpInput) => Promise<RegisterResult>;
   signInWithGoogle: () => Promise<User>;
   signOut: () => Promise<void>;
+  deleteAccount: (input: { password?: string; confirmation: string }) => Promise<void>;
   refresh: () => Promise<void>;
   regenerateAlias: () => Promise<User>;
   updateBio: (bio: string) => Promise<User>;
@@ -193,6 +194,17 @@ const signOut = useCallback(async () => {
   router.replace("/welcome")
 }, [user]);
 
+  const deleteAccount = useCallback(
+    async (input: { password?: string; confirmation: string }) => {
+      // Backend does the actual purge; on success we scrub local state.
+      await api.del("/users/me", input);
+      await clearToken();
+      setUser(null);
+      router.replace("/welcome");
+    },
+    [router],
+  );
+
   const refresh = useCallback(async () => {
     try {
       const me = await api.get<User>("/auth/me");
@@ -223,6 +235,7 @@ const signOut = useCallback(async () => {
         signUp,
         signInWithGoogle,
         signOut,
+        deleteAccount,
         refresh,
         regenerateAlias,
         updateBio,

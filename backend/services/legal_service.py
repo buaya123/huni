@@ -57,11 +57,12 @@ class LegalService:
 
         post = frontmatter.load(file)
 
+        # Convert all metadata values to strings for Pydantic validation
         return {
             "id": document,
-            "title": post.metadata.get("title"),
-            "version": post.metadata.get("version"),
-            "effective": post.metadata.get("effective"),
-            "last_updated": post.metadata.get("last_updated"),
+            "title": str(post.metadata.get("title", "")),
+            "version": str(post.metadata.get("version", version)),
+            "effective": str(post.metadata.get("effective", "")),
+            "last_updated": str(post.metadata.get("last_updated", "")),
             "content": post.content,
         }

@@ -3,108 +3,88 @@
 FastAPI + MongoDB (motor). JWT auth with bcrypt password hashing.
 WebSockets for realtime chat + notifications.
 """
-#from __future__ import annotations
-import os
 
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
-IS_PRODUCTION = ENVIRONMENT == "production"
-
-import asyncio
-import base64
 import logging
 import os
 import random
+import re
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone, time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
-import httpx
 import jwt
 from bcrypt import checkpw, gensalt, hashpw
-from dotenv import load_dotenv
+from bson.binary import Binary
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     FastAPI,
     Header,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
-    status,
 )
-from fastapi.responses import Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from fastapi import Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi import Body
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
-from pathlib import Path
-from routes import legal
 
-from core.security import SecurityHeadersMiddleware
-
-from email_service import (
-    generate_verification_code,
-    send_verification_email,
+from core.config import (
+    ADMIN_EMAILS,
+    CORS_ORIGINS,
+    DB_NAME,
+    ENABLE_DEV_SEED,
+    ENABLE_DOCS,
+    ENVIRONMENT,
+    FIREBASE_PROJECT_ID,
+    GOOGLE_SESSION_DAYS,
+    IS_PRODUCTION,
+    JWT_ALGORITHM,
+    JWT_EXPIRE_DAYS,
+    JWT_SECRET,
+    MAX_IMAGE_BYTES,
+    MIN_PASSWORD_LENGTH,
+    MIN_SIGNUP_AGE,
+    MONGO_URL,
+    TRUSTED_HOSTS,
 )
-
+from core.image_processor import InvalidImage, process_image
+from core.login_guard import (
+    clear_login_attempts,
+    is_locked_out,
+    register_failed_login,
+)
+from core.rate_limit import limiter
+from core.security import SecurityHeadersMiddleware
+from email_service import send_verification_email
+from routes import legal
 from verification_service import (
     create_verification,
-    verify_code,
     resend_verification,
+    verify_code,
 )
-
-from core.rate_limit import limiter
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
-
-
-from core.image_processor import (
-    process_image,
-    InvalidImage,
-)
-
-from bson.binary import Binary
-
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
-
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
-JWT_SECRET = os.environ["JWT_SECRET"]
-JWT_ALGORITHM = os.environ["JWT_ALGORITHM"]
-JWT_EXPIRE_DAYS = int(os.environ["JWT_EXPIRE_DAYS"])
-
-if not JWT_SECRET:
-    raise RuntimeError("SECRET_KEY is not configured.")
 
 FIREBASE_KEY = Path(__file__).parent / "serviceAccountKey.json"
 
-if not firebase_admin._apps:
-    if FIREBASE_KEY.exists():
-        try:
-            cred = credentials.Certificate(str(FIREBASE_KEY))
-            firebase_admin.initialize_app(cred)
-
-        except Exception as _e:
-            pass
-
-
-
-GOOGLE_SESSION_DAYS = int(os.environ.get("GOOGLE_SESSION_DAYS", "7"))
-ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
+if not firebase_admin._apps and FIREBASE_KEY.exists():
+    try:
+        cred = credentials.Certificate(str(FIREBASE_KEY))
+        firebase_admin.initialize_app(cred)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("huni").exception("Firebase init failed")
 
 client = AsyncIOMotorClient(
     MONGO_URL,
@@ -115,34 +95,79 @@ db = client[DB_NAME]
 
 security = HTTPBearer(auto_error=False)
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("huni")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await _run_startup()
+    try:
+        yield
+    finally:
+        client.close()
+
+
 app = FastAPI(
     title="Huni API",
-    docs_url=None if IS_PRODUCTION else "/docs",
-    redoc_url=None if IS_PRODUCTION else "/redoc",
-    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
+    lifespan=lifespan,
 )
 
 api = APIRouter(prefix="/api")
 
-app.include_router(legal.router)
+# ---- middleware (order: outer → inner) ----
+if TRUSTED_HOSTS and TRUSTED_HOSTS != ["*"]:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
+
+# CORS must be added BEFORE the app processes routes so preflights are handled.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=bool(CORS_ORIGINS) and CORS_ORIGINS != ["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    expose_headers=["Content-Type"],
+    max_age=600,
+)
+
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please slow down."},
+        headers={"Retry-After": "60"},
+    )
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError):
-    print("\n========== VALIDATION ERROR ==========")
-    print(exc.errors())
-    print("Body:", exc.body)
-    print("======================================\n")
-
-    return JSONResponse(
-        status_code=422,
-        content={"detail": exc.errors()},
+    # Never log request body — may contain passwords / PII.
+    safe_errors = [
+        {
+            "loc": err.get("loc"),
+            "msg": err.get("msg"),
+            "type": err.get("type"),
+        }
+        for err in exc.errors()
+    ]
+    logger.info(
+        "Validation error on %s %s (%d fields)",
+        request.method,
+        request.url.path,
+        len(safe_errors),
     )
-app.add_middleware(SecurityHeadersMiddleware)
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("huni")
+
+app.include_router(legal.router, prefix="/api")
 
 
 
@@ -168,10 +193,12 @@ def verify_pw(pw: str, hashed: str) -> bool:
 
 
 def make_token(user_id: str) -> str:
+    now_dt = now()
     payload = {
         "sub": user_id,
-        "iat": int(now().timestamp()),
-        "exp": int((now() + timedelta(days=JWT_EXPIRE_DAYS)).timestamp()),
+        "iat": int(now_dt.timestamp()),
+        "exp": int((now_dt + timedelta(days=JWT_EXPIRE_DAYS)).timestamp()),
+        "jti": new_id(),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -182,7 +209,13 @@ def decode_token(token: str) -> str:
         return payload["sub"]
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-        
+
+
+def _password_ok(pw: str) -> bool:
+    """Basic complexity — length + at least one letter + one digit."""
+    if len(pw) < MIN_PASSWORD_LENGTH:
+        return False
+    return bool(re.search(r"[A-Za-z]", pw)) and bool(re.search(r"\d", pw))
 
 
 ADJECTIVES = [
@@ -213,39 +246,42 @@ async def get_current_user(
 ) -> Dict[str, Any]:
     """Accept either a JWT (email/password auth) OR a session_token (Google auth)."""
     if credentials is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing token"
-        )
+        raise HTTPException(status_code=401, detail="Missing token")
 
     token = credentials.credentials
 
-    # 1) try JWT first (short-circuits when signature valid)
+    # 1) try JWT first (expiration IS verified, plus revocation check)
     try:
         payload = jwt.decode(
             token,
             JWT_SECRET,
             algorithms=[JWT_ALGORITHM],
-            options={"verify_exp": False}
+            options={"require": ["exp", "sub"]},
         )
-
         user_id = payload["sub"]
+
+        # Revocation check — a token can be revoked on /auth/logout or by admin.
+        jti = payload.get("jti") or token[-24:]  # legacy fallback
+        revoked = await db.revoked_tokens.find_one({"jti": jti}, {"_id": 1})
+        if revoked:
+            raise HTTPException(status_code=401, detail="Token has been revoked")
 
         user = await db.users.find_one(
             {"id": user_id},
             {"_id": 0, "password": 0},
         )
-
         if user:
+            if user.get("status") == "banned":
+                raise HTTPException(status_code=403, detail="Account suspended")
             return user
-
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
     except jwt.PyJWTError:
         pass
 
     # 2) try session_token (Google auth)
     session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
     if session:
-        # normalise expires_at to tz-aware then check
         exp = session.get("expires_at")
         exp_dt: Optional[datetime] = None
         if isinstance(exp, datetime):
@@ -258,8 +294,13 @@ async def get_current_user(
         if exp_dt and exp_dt.tzinfo is None:
             exp_dt = exp_dt.replace(tzinfo=timezone.utc)
         if exp_dt and exp_dt > now():
-            user = await db.users.find_one({"id": session["user_id"]}, {"_id": 0, "password": 0})
+            user = await db.users.find_one(
+                {"id": session["user_id"]},
+                {"_id": 0, "password": 0},
+            )
             if user:
+                if user.get("status") == "banned":
+                    raise HTTPException(status_code=403, detail="Account suspended")
                 return user
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -269,7 +310,7 @@ async def get_current_user(
 # ---------- models ----------
 class RegisterIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6, max_length=100)
+    password: str = Field(min_length=8, max_length=128)
     first_name: str = Field(min_length=1, max_length=50)
     last_name: str = Field(min_length=1, max_length=50)
     birthdate: str = Field(min_length=8, max_length=10)  # "YYYY-MM-DD"
@@ -857,14 +898,6 @@ class WSManager:
 
 ws_manager = WSManager()
 
-@api.api_route("/inspect", methods=["GET", "POST"])
-async def inspect(request: Request):
-    return {
-        "method": request.method,
-        "url": str(request.url),
-        "headers": dict(request.headers),
-    }
-
 
 # ---------- routes: root/health ----------
 @api.get("/")
@@ -1021,17 +1054,36 @@ async def resend_email(body: ResendVerificationIn):
 
 @api.post("/auth/register", response_model=RegisterOut)
 @limiter.limit("5/minute")
-async def register(request:Request,inp: RegisterIn) -> AuthOut:
+async def register(request: Request, inp: RegisterIn) -> Dict[str, Any]:
     email = inp.email.lower().strip()
+
+    if not _password_ok(inp.password):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Password must be at least {MIN_PASSWORD_LENGTH} characters "
+                "and contain both letters and numbers."
+            ),
+        )
 
     existing = await db.users.find_one({"email": email}, {"_id": 1})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     try:
-        datetime.strptime(inp.birthdate, "%Y-%m-%d")
+        bd = datetime.strptime(inp.birthdate, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid birthdate. Use YYYY-MM-DD.")
+
+    today = now().date()
+    age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+    if age < MIN_SIGNUP_AGE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"You must be at least {MIN_SIGNUP_AGE} years old to sign up.",
+        )
+    if bd.date() > today:
+        raise HTTPException(status_code=422, detail="Birthdate cannot be in the future.")
 
     user = await create_user(
         email=email,
@@ -1049,51 +1101,83 @@ async def register(request:Request,inp: RegisterIn) -> AuthOut:
     )
 
     try:
-        send_verification_email(
-            user["email"],
-            code,
-        )
+        send_verification_email(user["email"], code)
     except Exception:
-            await db.users.delete_one({
-                "id": user["id"],
-            })
+        await db.users.delete_one({"id": user["id"]})
+        await db.email_verifications.delete_many(
+            {"user_id": user["id"], "purpose": "verify_email"}
+        )
+        logger.exception("Verification email failed for %s", email)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to send verification email.",
+        )
 
-            await db.email_verifications.delete_many({
-                "user_id": user["id"],
-                "purpose": "verify_email",
-            })
-
-            raise HTTPException(
-                status_code=500,
-                detail="Unable to send verification email.",
-            )
-
-    return {
-        "verification_required": True,
-        "email": user["email"],
-    }
+    return {"verification_required": True, "email": user["email"]}
 
 
 @api.post("/auth/logout")
-async def logout(authorization: Optional[str] = Header(default=None)) -> Dict[str, str]:
+async def logout(
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, str]:
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
+
+        # Revoke Google session tokens (delete)
         await db.user_sessions.delete_many({"session_token": token})
+
+        # Revoke JWTs (blacklist by jti until natural expiry)
+        try:
+            payload = jwt.decode(
+                token,
+                JWT_SECRET,
+                algorithms=[JWT_ALGORITHM],
+                options={"verify_exp": False},
+            )
+            jti = payload.get("jti") or token[-24:]
+            exp = payload.get("exp")
+            expires_at = (
+                datetime.fromtimestamp(exp, tz=timezone.utc)
+                if isinstance(exp, (int, float))
+                else now() + timedelta(days=JWT_EXPIRE_DAYS)
+            )
+            await db.revoked_tokens.update_one(
+                {"jti": jti},
+                {"$set": {"jti": jti, "expires_at": expires_at}},
+                upsert=True,
+            )
+        except jwt.PyJWTError:
+            pass
     return {"status": "ok"}
 
 
 @api.post("/auth/login", response_model=AuthOut)
-@limiter.limit("5/minute")
-async def login(request:Request,inp: LoginIn) -> AuthOut:
+@limiter.limit("10/minute")
+async def login(request: Request, inp: LoginIn) -> AuthOut:
     email = inp.email.lower().strip()
+    lockout_key = f"email:{email}"
+
+    if await is_locked_out(db, lockout_key):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts. Please try again in a few minutes.",
+        )
+
     user = await db.users.find_one({"email": email})
-    if not user or not verify_pw(inp.password, user["password"]):
+    if not user or not verify_pw(inp.password, user.get("password", "")):
+        await register_failed_login(db, lockout_key)
+        # Generic message — don't disclose whether email exists.
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
     if not user.get("email_verified", False):
         raise HTTPException(
             status_code=403,
             detail="Please verify your email before logging in.",
         )
+    if user.get("status") == "banned":
+        raise HTTPException(status_code=403, detail="Account suspended")
+
+    await clear_login_attempts(db, lockout_key)
     user = await maybe_promote_admin(user)
     await award_xp_once_per_day(user["id"], "daily_login", 5, "daily_login")
     fresh = await db.users.find_one({"id": user["id"]})
@@ -1103,22 +1187,32 @@ async def login(request:Request,inp: LoginIn) -> AuthOut:
 
 
 @api.post("/auth/firebase", response_model=AuthOut)
-@limiter.limit("5/minute")
-async def firebase_login(request:Request,inp: FirebaseAuthIn = Body(...)) -> AuthOut:
+@limiter.limit("10/minute")
+async def firebase_login(request: Request, inp: FirebaseAuthIn = Body(...)) -> AuthOut:
     try:
-        decoded = firebase_auth.verify_id_token(inp.id_token)
+        decoded = firebase_auth.verify_id_token(
+            inp.id_token,
+            check_revoked=True,
+        )
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid Firebase token")
 
-    email = decoded["email"].lower().strip()
+    # Optional project restriction — refuse tokens from other Firebase projects.
+    if FIREBASE_PROJECT_ID and decoded.get("aud") != FIREBASE_PROJECT_ID:
+        raise HTTPException(status_code=401, detail="Firebase project mismatch")
+
+    if not decoded.get("email_verified", False):
+        raise HTTPException(status_code=403, detail="Email not verified with Google")
+
+    email = (decoded.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Firebase token has no email")
 
     user = await db.users.find_one({"email": email})
 
     if user is None:
-        full_name = decoded.get("name", "").strip()
-
+        full_name = (decoded.get("name") or "").strip()
         parts = full_name.split(" ", 1)
-
         first_name = parts[0] if parts else ""
         last_name = parts[1] if len(parts) > 1 else ""
 
@@ -1132,13 +1226,12 @@ async def firebase_login(request:Request,inp: FirebaseAuthIn = Body(...)) -> Aut
             picture=decoded.get("picture", ""),
         )
 
+    if user.get("status") == "banned":
+        raise HTTPException(status_code=403, detail="Account suspended")
 
+    user = await maybe_promote_admin(user)
     token = make_token(user["id"])
-
-    return AuthOut(
-        token=token,
-        user=public_user(user),
-    )
+    return AuthOut(token=token, user=public_user(user))
 @api.get("/auth/me")
 async def me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     return public_user(user)
@@ -1409,14 +1502,13 @@ async def delete_post(post_id: str, user: Dict[str, Any] = Depends(get_current_u
     p = await db.posts.find_one({"id": post_id})
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
-    if p["author_id"] != user["id"]:
+    if p["author_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not allowed")
-        image_ids = p.get("image_ids") or []
 
-        if image_ids:
-            await db.images.delete_many({
-                "id": {"$in": image_ids}
-            })
+    image_ids = p.get("image_ids") or []
+    if image_ids:
+        await db.images.delete_many({"id": {"$in": image_ids}})
+
     await db.posts.update_one({"id": post_id}, {"$set": {"status": "deleted"}})
     return {"status": "ok"}
 
@@ -1552,11 +1644,13 @@ async def my_bookmarks(
 
 
 # ---------- routes: image uploads ----------
-MAX_IMAGE_B64_LEN = 20 * 1024 * 1024 
+MAX_IMAGE_B64_LEN = MAX_IMAGE_BYTES
 
 
 @api.post("/uploads")
+@limiter.limit("60/hour")
 async def upload_image(
+    request: Request,
     inp: UploadIn,
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, str]:
@@ -1576,15 +1670,10 @@ async def upload_image(
     try:
         processed = process_image(data)
     except InvalidImage as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
-        )
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to process image.",
-        )
+        logger.exception("Image processing failed")
+        raise HTTPException(status_code=500, detail="Failed to process image.")
 
     image_id = new_id()
 
@@ -1802,15 +1891,26 @@ async def ad_click(ad_id: str, user: Dict[str, Any] = Depends(get_current_user))
 # ---------- routes: admin ----------
 @api.get("/admin/users")
 async def admin_search_users(
-    q: str = Query(default=""),
+    q: str = Query(default="", max_length=100),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
     require_role(user, "admin")
     query: Dict[str, Any] = {}
-    if q.strip():
-        rx = {"$regex": q.strip(), "$options": "i"}
+    q_stripped = q.strip()
+    if q_stripped:
+        # Escape user input — never pass raw regex to MongoDB.
+        rx = {"$regex": re.escape(q_stripped), "$options": "i"}
         query = {"$or": [{"email": rx}, {"alias": rx}, {"first_name": rx}, {"last_name": rx}]}
-    rows = await db.users.find(query, {"_id": 0, "password": 0}).sort("joined_at", -1).limit(20).to_list(20)
+    rows = (
+        await db.users
+        .find(query, {"_id": 0, "password": 0})
+        .sort("joined_at", -1)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
+    )
     return [
         {
             "id": u["id"], "alias": u["alias"], "email": u.get("email", ""),
@@ -2094,15 +2194,20 @@ async def partner_create_campaign(inp: CampaignCreate, user: Dict[str, Any] = De
 
 
 @api.get("/partner/campaigns")
-async def partner_my_campaigns(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
+async def partner_my_campaigns(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
     require_role(user, "partner", "admin")
+    q: Dict[str, Any] = {"partner_id": user["id"]}
     rows = await (
         db.campaigns
-            .find(q, {"_id": 0})
-            .sort("created_at", -1)
-            .skip(offset)
-            .limit(limit)
-            .to_list(limit)
+        .find(q, {"_id": 0})
+        .sort("created_at", -1)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
     )
     return [_hydrate_campaign(c, user) for c in rows]
 
@@ -2140,17 +2245,19 @@ async def partner_update_campaign(campaign_id: str, inp: CampaignUpdate, user: D
         updates["status"] = "pending"
         updates["rejected_reason"] = None
         updates["approved_at"] = None
+    if inp.redemption_policy is not None:
+        updates["redemption_policy"] = inp.redemption_policy
+
+    if inp.cooldown_value is not None:
+        updates["cooldown_value"] = inp.cooldown_value
+
+    if inp.cooldown_unit is not None:
+        updates["cooldown_unit"] = inp.cooldown_unit
+
     if updates:
         await db.campaigns.update_one({"id": campaign_id}, {"$set": updates})
         c.update(updates)
-    if inp.redemption_policy is not None:
-        update["redemption_policy"] = inp.redemption_policy
 
-    if inp.cooldown_value is not None:
-        update["cooldown_value"] = inp.cooldown_value
-
-    if inp.cooldown_unit is not None:
-        update["cooldown_unit"] = inp.cooldown_unit
     return await _load_campaign_with_partner(c)
 
 
@@ -2312,9 +2419,9 @@ async def partner_redeem(request:Request,inp: PartnerRedeemIn, user: Dict[str, A
         require_role(user, "partner", "admin")
 
     c = await db.campaigns.find_one({"id": inp.campaign_id})
-    visibility = c.get("visible_to","owner")
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    visibility = c.get("visible_to", "owner")
     if visibility == "owner":
         if c["partner_id"] != partner["id"]:
             raise HTTPException(
@@ -3021,45 +3128,76 @@ async def admin_delete_store_item(item_id: str, user: Dict[str, Any] = Depends(g
 
 # ---------- routes: store purchase & equip ----------
 @api.post("/store/items/{item_id}/purchase")
-async def purchase_store_item(item_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+@limiter.limit("30/hour")
+async def purchase_store_item(
+    request: Request,
+    item_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
     item = await db.store_items.find_one({"id": item_id}, {"_id": 0})
     if not item or not item.get("enabled", True):
         raise HTTPException(status_code=404, detail="Item not found")
-    # active-date check
+
     today = now().date().isoformat()
     if item.get("active_from") and today < item["active_from"]:
         raise HTTPException(status_code=400, detail="Item not yet available")
     if item.get("active_until") and today > item["active_until"]:
         raise HTTPException(status_code=400, detail="Item no longer available")
-    # already owned?
+
     existing = await db.purchases.find_one({"user_id": user["id"], "item_id": item_id})
     if existing:
         raise HTTPException(status_code=409, detail="You already own this item")
-    # tokens
+
     price = int(item.get("price_tokens", 0) or 0)
-    balance = int(user.get("tokens", 0) or 0)
-    if balance < price:
-        raise HTTPException(status_code=400, detail=f"Not enough tokens (need {price}, have {balance})")
-    # stock
     stock = int(item.get("stock", -1) if item.get("stock") is not None else -1)
     if stock == 0:
         raise HTTPException(status_code=400, detail="Out of stock")
-    # debit + record + decrement (best effort ordering)
-    await db.users.update_one({"id": user["id"]}, {"$inc": {"tokens": -price}})
-    await db.purchases.insert_one({
-        "id": new_id(),
-        "user_id": user["id"],
-        "item_id": item_id,
-        "price_paid": price,
-        "purchased_at": now().isoformat(),
-    })
+
+    # 1) Atomic token debit — only succeeds if balance is sufficient.
+    debited = await db.users.find_one_and_update(
+        {"id": user["id"], "tokens": {"$gte": price}},
+        {"$inc": {"tokens": -price}},
+        projection={"_id": 0, "tokens": 1},
+        return_document=True,
+    )
+    if not debited:
+        balance = int((user or {}).get("tokens", 0) or 0)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough tokens (need {price}, have {balance})",
+        )
+
+    # 2) Try to record ownership. Unique index (user_id, item_id) prevents dup.
+    try:
+        await db.purchases.insert_one({
+            "id": new_id(),
+            "user_id": user["id"],
+            "item_id": item_id,
+            "price_paid": price,
+            "purchased_at": now().isoformat(),
+        })
+    except Exception:
+        # Refund on failure — best-effort rollback of the debit.
+        await db.users.update_one({"id": user["id"]}, {"$inc": {"tokens": price}})
+        raise HTTPException(status_code=409, detail="You already own this item")
+
+    # 3) Atomic stock decrement — only if stock > 0.
     if stock > 0:
-        await db.store_items.update_one({"id": item_id}, {"$inc": {"stock": -1}})
-    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+        stocked = await db.store_items.find_one_and_update(
+            {"id": item_id, "stock": {"$gt": 0}},
+            {"$inc": {"stock": -1}},
+            return_document=True,
+        )
+        if not stocked:
+            # Refund + roll back purchase.
+            await db.users.update_one({"id": user["id"]}, {"$inc": {"tokens": price}})
+            await db.purchases.delete_one({"user_id": user["id"], "item_id": item_id})
+            raise HTTPException(status_code=400, detail="Out of stock")
+
     return {
         "status": "ok",
         "item": _hydrate_store_item(item),
-        "tokens": int((fresh or {}).get("tokens", 0) or 0),
+        "tokens": int(debited.get("tokens", 0)),
     }
 
 
@@ -3342,17 +3480,11 @@ async def delete_comment(comment_id: str, user: Dict[str, Any] = Depends(get_cur
     is_ad_owner = bool(ad) and ad["advertiser_id"] == user["id"]
     if not (is_owner or is_ad_owner or user.get("role") == "admin"):
         raise HTTPException(status_code=403, detail="Not allowed")
-        image_ids = comment.get("image_ids") or []
 
-        if image_ids:
-            await db.images.delete_many({
-                "id": {"$in": image_ids}
-            })
+    image_ids = c.get("image_ids") or []
+    if image_ids:
+        await db.images.delete_many({"id": {"$in": image_ids}})
 
-        await db.comments.update_one(
-            {"id": comment_id},
-            {"$set": {"status": "deleted"}}
-        )
     await db.comments.update_one({"id": comment_id}, {"$set": {"status": "deleted"}})
     if ad:
         await db.ads.update_one({"id": c["post_id"]}, {"$inc": {"comment_count": -1}})
@@ -3811,7 +3943,7 @@ async def resolve_report(
             {
                 "$set": {
                     "status": "dismissed",
-                    "resolved_at": utc_now(),
+                    "resolved_at": now().isoformat(),
                     "resolved_by": user["id"],
                     "moderator_action": "dismiss",
                     "violation": body.violation,
@@ -3853,7 +3985,7 @@ async def resolve_report(
             {
                 "$set": {
                     "status": "deleted_by_admin",
-                    "deleted_at": utc_now(),
+                    "deleted_at": now().isoformat(),
                     "deleted_by": user["id"],
                     "deletion_reason": body.violation,
                     "moderator_note": body.note,
@@ -3872,7 +4004,7 @@ async def resolve_report(
             {
                 "$set": {
                     "status": "resolved",
-                    "resolved_at": utc_now(),
+                    "resolved_at": now().isoformat(),
                     "resolved_by": user["id"],
                     "moderator_action": "delete_post",
                     "resolved_target_status": "deleted_by_admin",
@@ -3900,10 +4032,22 @@ async def resolve_report(
 @api.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, token: str = Query(...)) -> None:
     try:
-        user_id = decode_token(token)
-    except HTTPException:
-        await ws.close(code=1008)
-        return
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload["sub"]
+        # Revocation check
+        jti = payload.get("jti") or token[-24:]
+        revoked = await db.revoked_tokens.find_one({"jti": jti}, {"_id": 1})
+        if revoked:
+            await ws.close(code=1008)
+            return
+    except jwt.PyJWTError:
+        # Fall back to Google session token
+        session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+        if not session:
+            await ws.close(code=1008)
+            return
+        user_id = session["user_id"]
+
     await ws_manager.connect(user_id, ws)
     try:
         while True:
@@ -3918,11 +4062,12 @@ async def ws_endpoint(ws: WebSocket, token: str = Query(...)) -> None:
 # ---------- seed ----------
 @api.post("/dev/seed")
 async def seed_data() -> Dict[str, Any]:
-    """Seed demo users and posts. Idempotent-ish for demo purposes.
+    """Seed demo users and posts.
 
-    Disabled unless ENABLE_DEV_SEED=true in the environment.
+    Only available when NOT running in production AND ENABLE_DEV_SEED=true.
+    Refuses to run in production regardless of env flag.
     """
-    if os.environ.get("ENABLE_DEV_SEED", "false").lower() != "true":
+    if IS_PRODUCTION or not ENABLE_DEV_SEED:
         raise HTTPException(status_code=404, detail="Not found")
     demo_users = [
         {"email": "demo1@huni.app", "password": "demo1234", "first_name": "Ana", "last_name": "Cruz", "birthdate": "1998-04-12"},
@@ -3952,8 +4097,19 @@ async def seed_data() -> Dict[str, Any]:
                 "joined_at": now().isoformat(),
                 "alias_regens": 0,
                 "last_alias_regen": None,
+                "email_verified": True,
+                "email_verified_at": now().isoformat(),
+                "accepted_terms": True,
+                "accepted_terms_at": now().isoformat(),
+                "terms_version": 1,
             }
             await db.users.insert_one(u)
+        else:
+            # Bring existing seed users up to spec.
+            await db.users.update_one(
+                {"id": u["id"]},
+                {"$set": {"email_verified": True, "email_verified_at": u.get("email_verified_at") or now().isoformat()}},
+            )
         created_users.append(u["id"])
 
     sample = [
@@ -4020,23 +4176,8 @@ async def seed_data() -> Dict[str, Any]:
 
 app.include_router(api)
 
-cors_origins = [
-    origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=cors_origins,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
+async def _run_startup() -> None:
     # indexes
     await db.users.create_index("email", unique=True)
     await db.users.create_index("id", unique=True)
@@ -4054,7 +4195,7 @@ async def on_startup() -> None:
     await db.campaigns.create_index([("partner_id", 1), ("created_at", -1)])
     await db.campaigns.create_index("status")
     await db.redemptions.create_index("id", unique=True)
-    await db.redemptions.create_index([("campaign_id", 1), ("user_id", 1),("redeemed_at", -1)])
+    await db.redemptions.create_index([("campaign_id", 1), ("user_id", 1), ("redeemed_at", -1)])
     await db.redemptions.create_index([("user_id", 1), ("redeemed_at", -1)])
     await db.redemptions.create_index([("partner_id", 1), ("redeemed_at", -1)])
     await db.store_items.create_index("id", unique=True)
@@ -4067,6 +4208,12 @@ async def on_startup() -> None:
     await db.purchases.create_index("id", unique=True)
     await db.purchases.create_index([("user_id", 1), ("item_id", 1)], unique=True)
     await db.purchases.create_index([("user_id", 1), ("purchased_at", -1)])
+
+    # Security-related indexes
+    await db.revoked_tokens.create_index("jti", unique=True)
+    await db.revoked_tokens.create_index("expires_at", expireAfterSeconds=0)
+    await db.login_attempts.create_index("key", unique=True)
+    await db.login_attempts.create_index("expires_at", expireAfterSeconds=0)
 
     # Economy migration: backfill exp / tokens / campaign budget fields
     try:
@@ -4090,8 +4237,8 @@ async def on_startup() -> None:
             {"exp_awarded": {"$exists": False}},
             [{"$set": {"exp_awarded": {"$ifNull": ["$points_awarded", 0]}, "tokens_awarded": 0}}],
         )
-    except Exception as _mig:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001
+        logger.exception("Economy migration failed (non-fatal)")
 
     # Seed a few mock appearance store items (idempotent — only if none exist for that subcategory).
     try:
@@ -4107,7 +4254,10 @@ async def on_startup() -> None:
             {"name": "Robot Avatar Pack (mock)", "subcategory": "avatar_packs", "hex_color": None, "description": "MOCK — 512×512 avatar. Replace image_id via Admin.", "price_tokens": 90},
         ]
         for m in MOCK_STORE_ITEMS:
-            exists = await db.store_items.find_one({"name": m["name"], "category": "appearance", "subcategory": m["subcategory"]}, {"_id": 0, "id": 1})
+            exists = await db.store_items.find_one(
+                {"name": m["name"], "category": "appearance", "subcategory": m["subcategory"]},
+                {"_id": 0, "id": 1},
+            )
             if exists:
                 continue
             await db.store_items.insert_one({
@@ -4126,8 +4276,8 @@ async def on_startup() -> None:
                 "sort_order": 0,
                 "created_at": now().isoformat(),
             })
-    except Exception as _seed:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001
+        logger.exception("Store seed failed (non-fatal)")
 
     # promote configured admin emails
     if ADMIN_EMAILS:
@@ -4143,10 +4293,5 @@ async def on_startup() -> None:
     await db.user_sessions.create_index("user_id")
     # TTL index — MongoDB auto-removes expired sessions
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
-    logger.info("Huni API started")
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    client.close()
+    logger.info("Huni API started (env=%s)", ENVIRONMENT)
 

@@ -56,13 +56,12 @@ async def verify_code(
     purpose: str = "verify_email",
 ):
     verification = await db.email_verifications.find_one(
-    {
-        "user_id": user_id,
-        "email": email.lower(),
-        "purpose": purpose,
-    },
-    sort=[("created_at", -1)],
-)
+        {
+            "email": email.lower(),
+            "purpose": purpose,
+        },
+        sort=[("created_at", -1)],
+    )
 
     if not verification:
         return False, "Verification not found.", None

@@ -24,6 +24,8 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "30"))
 
+DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+
 # ---- optional ----
 GOOGLE_SESSION_DAYS = int(os.getenv("GOOGLE_SESSION_DAYS", "7"))
 ADMIN_EMAILS = {
@@ -42,7 +44,20 @@ if not CORS_ORIGINS and not IS_PRODUCTION:
     # Sensible dev defaults — Expo web, LAN, tunnels
     CORS_ORIGINS = ["*"]
 
-TRUSTED_HOSTS = _parse_csv("TRUSTED_HOSTS") or ["*"]
+if IS_PRODUCTION:
+    TRUSTED_HOSTS = _parse_csv("TRUSTED_HOSTS")
+else:
+    TRUSTED_HOSTS = _parse_csv("TRUSTED_HOSTS") or ["*"]
+
+if IS_PRODUCTION and not TRUSTED_HOSTS:
+    raise RuntimeError(
+        "TRUSTED_HOSTS must be configured in production."
+    )
+
+if IS_PRODUCTION and MONGO_URL.startswith("mongodb://"):
+    raise RuntimeError(
+        "Use mongodb+srv:// in production."
+    )
 
 # ---- dev toggles ----
 ENABLE_DEV_SEED = os.getenv("ENABLE_DEV_SEED", "false").lower() == "true"
@@ -64,6 +79,10 @@ _INSECURE_JWT_DEFAULTS = {
     "huni_jwt_secret_change_me_in_prod_2026",
 }
 
+if IS_PRODUCTION and DEBUG:
+    raise RuntimeError(
+        "DEBUG must be False in production."
+    )
 
 def validate_config() -> None:
     """Fail fast on insecure production configuration."""

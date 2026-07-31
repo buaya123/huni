@@ -37,7 +37,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #
         # Remove server identification if present
         #
-        response.headers.pop("Server", None)
+        try:
+            del response.headers["Server"]
+        except KeyError:
+            pass
 
         #
         # Enable ONLY after HTTPS is working

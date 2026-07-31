@@ -6,9 +6,13 @@ import type {
 } from "@/src/types/admin";
 
 export class AdminCampaignRepository {
-    static async getAll(): Promise<AdminCampaign[]> {
+    static async getAll(
+        offset = 0,
+        limit = 20,
+    ): Promise<AdminCampaign[]> {
+
         return api.get<AdminCampaign[]>(
-            "/admin/campaigns"
+            `/admin/campaigns?offset=${offset}&limit=${limit}`
         );
     }
 

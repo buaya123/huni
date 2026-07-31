@@ -76,3 +76,16 @@ export interface ApproveCampaignRequest {
 export interface RejectCampaignRequest {
     reason: string;
 }
+
+export interface AdminReport {
+    id: string;
+    reporter_id: string;
+    target_type: string;
+    target_id: string;
+    reason: string;
+    status: string;
+    created_at: string;
+
+    reporter?: any;
+    target?: any;
+}

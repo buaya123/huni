@@ -27,22 +27,31 @@ export default function PostDetail() {
   const [post, setPost] = useState<Post | null>(null);
 
 
-
+const [loadError, setLoadError] =
+    useState<"not_found" | "error" | null>(null);
   const [loading, setLoading] = useState(true);
   const [showActions, setShowActions] = useState(false);
 
 
 
-  const load = useCallback(async () => {
+const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+
     try {
-      const p = await loadPost(id);
-      setPost(p);
-    } catch {
-      // ignore
+        const p = await loadPost(id);
+        setPost(p);
+    } catch (e: any) {
+        if (e.status === 404) {
+            setLoadError("not_found");
+        } else {
+            console.error(e);
+            setLoadError("error");
+        }
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }, [id]);
+}, [id, loadPost]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -77,6 +86,59 @@ export default function PostDetail() {
   };
 
   if (loading || !post) {
+    if (loadError === "not_found") {
+    return (
+        <SafeAreaView style={styles.wrap}>
+            <View style={styles.center}>
+
+                <Ionicons
+                    name="document-outline"
+                    size={64}
+                    color={colors.muted}
+                />
+
+                <Text
+                    style={{
+                        fontSize: font.lg,
+                        fontWeight: "700",
+                        color: colors.onSurface,
+                        marginTop: spacing.lg,
+                    }}
+                >
+                    This post is no longer available
+                </Text>
+
+                <Text
+                    style={{
+                        color: colors.muted,
+                        textAlign: "center",
+                        marginTop: spacing.sm,
+                        paddingHorizontal: spacing.xl,
+                    }}
+                >
+                    It may have been deleted by its author or removed by moderators.
+                </Text>
+
+                <Pressable
+                    onPress={() => router.back()}
+                    style={{
+                        marginTop: spacing.xl,
+                    }}
+                >
+                    <Text
+                        style={{
+                            color: colors.brand,
+                            fontWeight: "700",
+                        }}
+                    >
+                        Go Back
+                    </Text>
+                </Pressable>
+
+            </View>
+        </SafeAreaView>
+    );
+}
     
     return (
       <SafeAreaView style={styles.wrap} edges={["top"]}>

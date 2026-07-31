@@ -8,6 +8,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  FlatList,
   Switch,
   Text,
   TextInput,
@@ -16,19 +17,19 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
-import { AdminUsersRepository } from "@/src/repositories/AdminUsersRepository";
 import { useAuth } from "@/src/context/auth";
 import { colors, font, radius, spacing } from "@/src/theme/tokens";
 import type {
     AdminUser,
     AdminCampaign,
+    AdminReport,
 } from "@/src/types/admin";
 import { AdminSettingsRepository } from "@/src/repositories/AdminSettingsRepository";
 import { AdminCampaignRepository } from "@/src/repositories/AdminCampaignRepository";
 import { AdsRepository } from "@/src/repositories/AdsRepository";
 import { useAdminUsersStore } from "@/src/stores/admin/useAdminUsersStore"
 import { useAdminDashboardStore } from "@/src/stores/admin/useAdminDashboardStore";
+import AdminReportsRepository from "@/src/repositories/AdminReportsRepository";
 
 function rewardSummary(c: { exp_per_redemption?: number; tokens_per_redemption?: number; discount_label?: string }): string {
   const parts: string[] = [];
@@ -77,6 +78,7 @@ export default function AdminPanel() {
   const everyN = useAdminDashboardStore((s) => s.everyN);
   const ads = useAdminDashboardStore((s) => s.ads);
   const campaigns = useAdminDashboardStore((s) => s.campaigns);
+  const reports = useAdminDashboardStore((s) => s.reports);
 
   const load = useAdminDashboardStore((s) => s.load);
   const updateEveryN = useAdminDashboardStore((s) => s.updateEveryN);
@@ -84,6 +86,8 @@ export default function AdminPanel() {
   const setCampaigns = useAdminDashboardStore(
       (s) => s.setCampaigns
   );
+  
+
 
   const [promotePartner, setPromotePartner] = useState<{ userId: string; businessName: string; businessType: string } | null>(null);
   const [reviewCampaign, setReviewCampaign] = useState<AdminCampaign | null>(null);
@@ -95,6 +99,55 @@ export default function AdminPanel() {
   const [approvalExpBudget, setApprovalExpBudget] = useState<string>("2500");
   const [approvalTokBudget, setApprovalTokBudget] = useState<string>("5000");
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
+  const [reviewReport, setReviewReport] = useState<AdminReport | null>(null);
+  const [deleteReport, setDeleteReport] = useState<AdminReport | null>(null);
+  const [violation, setViolation] = useState("spam");
+  const [moderatorNote, setModeratorNote] = useState("");
+  const [notifyAuthor, setNotifyAuthor] = useState(true);
+  const [notifyInteracted, setNotifyInteracted] = useState(true);
+  const [deletingPost, setDeletingPost] = useState(false);
+
+  const violations = [
+    {
+        id: "spam",
+        label: "Spam",
+    },
+    {
+        id: "harassment",
+        label: "Harassment",
+    },
+    {
+        id: "hate_speech",
+        label: "Hate Speech",
+    },
+    {
+        id: "misinformation",
+        label: "Misinformation",
+    },
+    {
+        id: "illegal_activity",
+        label: "Illegal Activity",
+    },
+    {
+        id: "explicit_content",
+        label: "Explicit Content",
+    },
+    {
+        id: "impersonation",
+        label: "Impersonation",
+    },
+    {
+        id: "scam",
+        label: "Scam",
+    },
+    {
+        id: "other",
+        label: "Other",
+    },
+];
+  
+
+  //const [reports, setReports] = useState<any[]>([]);
 
   const isAdmin = user?.role === "admin";
 
@@ -102,6 +155,37 @@ export default function AdminPanel() {
   useEffect(() => {
     if (isAdmin) load();
   }, [isAdmin, load]);
+
+
+  useEffect(() => {
+    if (reviewReport) {
+        console.log("REPORT:", reviewReport);
+    }
+}, [reviewReport]);
+
+const reportsHasMore = useAdminDashboardStore(
+    (s) => s.reportsHasMore
+);
+
+const reportsLoadingMore = useAdminDashboardStore(
+    (s) => s.reportsLoadingMore
+);
+
+const loadMoreReports = useAdminDashboardStore(
+    (s) => s.loadMoreReports
+);
+
+const campaignsHasMore = useAdminDashboardStore(
+    (s) => s.campaignsHasMore
+);
+
+const campaignsLoadingMore = useAdminDashboardStore(
+    (s) => s.campaignsLoadingMore
+);
+
+const loadMoreCampaigns = useAdminDashboardStore(
+    (s) => s.loadMoreCampaigns
+);
 
 
   const setRole = async (
@@ -142,6 +226,78 @@ export default function AdminPanel() {
     setApprovalTokBudget("5000");
     setApproving(c);
   };
+
+  const dismissReport = async () => {
+    if (!reviewReport) return;
+
+    try {
+        await AdminReportsRepository.dismissReport(
+            reviewReport.id
+        );
+
+        Alert.alert(
+            "Success",
+            "Report dismissed."
+        );
+
+        await load();
+
+        setReviewReport(null);
+    } catch (e) {
+        Alert.alert(
+            "Error",
+            e instanceof Error
+                ? e.message
+                : "Could not dismiss report."
+        );
+    }
+};
+
+const deletePost = async () => {
+
+    if (!deleteReport) return;
+
+    try {
+
+        setDeletingPost(true);
+
+        await AdminReportsRepository.resolve(
+            deleteReport.id,
+            {
+                action: "delete_post",
+                violation,
+                note: moderatorNote,
+                notify: true,
+            }
+        );
+
+        Alert.alert(
+            "Success",
+            "The post has been removed."
+        );
+
+        setDeleteReport(null);
+
+        setModeratorNote("");
+
+        setViolation("spam");
+
+        await load();
+
+    } catch (e: any) {
+
+        Alert.alert(
+            "Error",
+            e?.message ?? "Failed to delete post."
+        );
+
+    } finally {
+
+        setDeletingPost(false);
+
+    }
+
+};
 
   const submitApproval = async () => {
     if (!approving) return;
@@ -291,46 +447,250 @@ export default function AdminPanel() {
           ))}
         </View>
 
+        {/* this right here is the reports */}
+        <View style={styles.section}>
+    <Text style={styles.sectionTitle}>
+        Reports ({reports.length})
+    </Text>
+
+    {reports.length === 0 && (
+        <Text style={styles.emptyText}>
+            No pending reports.
+        </Text>
+    )}
+
+{reports.map((r) => (
+
+    <Pressable
+        key={r.id}
+        style={styles.campRow}
+        onPress={() => setReviewReport(r)}
+    >
+
+        <View style={{ flex: 1 }}>
+
+            <Text style={styles.userAlias}>
+                {r.target_type.toUpperCase()}
+            </Text>
+
+            <Text style={styles.userEmail}>
+                {r.reason}
+            </Text>
+
+            <Text
+                style={styles.userEmail}
+                numberOfLines={2}
+            >
+                {r.target?.content ??
+                    r.target?.title ??
+                    r.target?.alias ??
+                    "Unavailable"}
+            </Text>
+
+            <View style={styles.reviewCTA}>
+                <Ionicons
+                    name="eye-outline"
+                    size={12}
+                    color={colors.brand}
+                />
+                <Text style={styles.reviewCTAText}>
+                    Tap to review report
+                </Text>
+            </View>
+
+        </View>
+
+    </Pressable>
+
+))}
+
+{reportsHasMore && (
+
+    <Pressable
+        style={[
+            styles.promoteBtn,
+            {
+                marginTop: spacing.md,
+                alignSelf: "center",
+            },
+        ]}
+        onPress={loadMoreReports}
+        disabled={reportsLoadingMore}
+    >
+
+        {reportsLoadingMore ? (
+
+            <ActivityIndicator color="#FFF" />
+
+        ) : (
+
+            <Text style={styles.promoteText}>
+                Load More Reports
+            </Text>
+
+        )}
+
+    </Pressable>
+
+)}
+</View>
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Campaign approvals ({campaigns.filter((c) => c.status === "pending").length} pending)</Text>
           {campaigns.length === 0 && <Text style={styles.emptyText}>No campaigns submitted yet.</Text>}
-          {campaigns.map((c) => (
-            <Pressable
-              key={c.id}
-              style={styles.campRow}
-              onPress={() => setReviewCampaign(c)}
-              testID={`admin-camp-${c.id}`}
+{campaigns.map((c) => (
+
+    <Pressable
+        key={c.id}
+        style={styles.campRow}
+        onPress={() => setReviewCampaign(c)}
+        testID={`admin-camp-${c.id}`}
+    >
+
+        <View style={{ flex: 1 }}>
+
+            <Text
+                style={styles.userAlias}
+                numberOfLines={2}
             >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.userAlias} numberOfLines={2}>{c.title}</Text>
-                <Text style={styles.userEmail} numberOfLines={1}>
-                  {c.partner?.business_name ?? c.partner?.alias ?? "?"} · {rewardSummary(c)}
-                </Text>
-                <Text style={styles.userEmail} numberOfLines={2}>{c.description}</Text>
-                {c.status === "rejected" && !!c.rejected_reason && (
-                  <Text style={[styles.userEmail, { color: colors.error }]} numberOfLines={2}>Rejected: {c.rejected_reason}</Text>
+                {c.title}
+            </Text>
+
+            <Text
+                style={styles.userEmail}
+                numberOfLines={1}
+            >
+                {c.partner?.business_name ??
+                    c.partner?.alias ??
+                    "?"}
+                {" · "}
+                {rewardSummary(c)}
+            </Text>
+
+            <Text
+                style={styles.userEmail}
+                numberOfLines={2}
+            >
+                {c.description}
+            </Text>
+
+            {c.status === "rejected" &&
+                !!c.rejected_reason && (
+                    <Text
+                        style={[
+                            styles.userEmail,
+                            {
+                                color: colors.error,
+                            },
+                        ]}
+                        numberOfLines={2}
+                    >
+                        Rejected: {c.rejected_reason}
+                    </Text>
                 )}
-                <View style={styles.reviewCTA}>
-                  <Ionicons name="eye-outline" size={12} color={colors.brand} />
-                  <Text style={styles.reviewCTAText}>Tap to review full details</Text>
-                </View>
-              </View>
-              {c.status === "pending" ? (
-                <View style={{ gap: 4 }}>
-                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.success }]} onPress={() => openApproveFlow(c)} testID={`approve-${c.id}`}>
-                    <Text style={styles.promoteText}>Approve</Text>
-                  </Pressable>
-                  <Pressable style={[styles.promoteBtn, { backgroundColor: colors.error }]} onPress={() => { setRejectingId(c.id); setRejectReason(""); }} testID={`reject-${c.id}`}>
-                    <Text style={styles.promoteText}>Reject</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={[styles.roleChip, c.status === "approved" && styles.roleChipAdv, c.status === "rejected" && { backgroundColor: "#FDE0E0" }]}>
-                  <Text style={styles.roleText}>{c.status}</Text>
-                </View>
-              )}
-            </Pressable>
-          ))}
+
+            <View style={styles.reviewCTA}>
+                <Ionicons
+                    name="eye-outline"
+                    size={12}
+                    color={colors.brand}
+                />
+                <Text style={styles.reviewCTAText}>
+                    Tap to review full details
+                </Text>
+            </View>
+
+        </View>
+
+        {c.status === "pending" ? (
+
+            <View style={{ gap: 4 }}>
+
+                <Pressable
+                    style={[
+                        styles.promoteBtn,
+                        {
+                            backgroundColor: colors.success,
+                        },
+                    ]}
+                    onPress={() => openApproveFlow(c)}
+                >
+                    <Text style={styles.promoteText}>
+                        Approve
+                    </Text>
+                </Pressable>
+
+                <Pressable
+                    style={[
+                        styles.promoteBtn,
+                        {
+                            backgroundColor: colors.error,
+                        },
+                    ]}
+                    onPress={() => {
+                        setRejectingId(c.id);
+                        setRejectReason("");
+                    }}
+                >
+                    <Text style={styles.promoteText}>
+                        Reject
+                    </Text>
+                </Pressable>
+
+            </View>
+
+        ) : (
+
+            <View
+                style={[
+                    styles.roleChip,
+                    c.status === "approved" &&
+                        styles.roleChipAdv,
+                    c.status === "rejected" && {
+                        backgroundColor: "#FDE0E0",
+                    },
+                ]}
+            >
+                <Text style={styles.roleText}>
+                    {c.status}
+                </Text>
+            </View>
+
+        )}
+
+    </Pressable>
+
+))}
+
+{campaignsHasMore && (
+
+    <Pressable
+        style={[
+            styles.promoteBtn,
+            {
+                marginTop: spacing.md,
+                alignSelf: "center",
+            },
+        ]}
+        onPress={loadMoreCampaigns}
+        disabled={campaignsLoadingMore}
+    >
+
+        {campaignsLoadingMore ? (
+
+            <ActivityIndicator color="#FFF" />
+
+        ) : (
+
+            <Text style={styles.promoteText}>
+                Load More Campaigns
+            </Text>
+
+        )}
+
+    </Pressable>
+
+)}
         </View>
 
         <View style={styles.section}>
@@ -441,6 +801,297 @@ export default function AdminPanel() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+    transparent
+    visible={!!reviewReport}
+    animationType="fade"
+    onRequestClose={() => setReviewReport(null)}
+>
+    <View style={styles.modalBg}>
+        <View style={styles.reviewCard}>
+
+            <View style={styles.reviewHead}>
+                <Text style={styles.modalTitle}>
+                    Report
+                </Text>
+
+                <Pressable
+                    onPress={() => setReviewReport(null)}
+                >
+                    <Ionicons
+                        name="close"
+                        size={24}
+                        color={colors.onSurface}
+                    />
+                </Pressable>
+            </View>
+
+            {reviewReport && (
+                <>
+                    <ReviewField
+                        label="Target Type"
+                        value={reviewReport.target_type}
+                    />
+
+                    <ReviewField
+                        label="Reason"
+                        value={reviewReport.reason}
+                    />
+
+                    <ReviewField
+                        label="Reported by"
+                        value={reviewReport.reporter.alias}
+                    />
+
+                    {reviewReport.target_type === "post" && (
+    <>
+        <ReviewField
+            label="Title"
+            value={reviewReport.target.title}
+        />
+
+        <ReviewField
+            label="Mood"
+            value={reviewReport.target.mood}
+        />
+
+        <ReviewField
+            label="Content"
+            value={reviewReport.target.content}
+        />
+
+        <View
+            style={{
+                flexDirection: "row",
+                gap: spacing.md,
+            }}
+        >
+            <Text style={styles.userEmail}>
+                ❤️ {reviewReport.target.reactions?.heart ?? 0}
+            </Text>
+
+            <Text style={styles.userEmail}>
+                💬 {reviewReport.target.comment_count}
+            </Text>
+        </View>
+    </>
+)}
+                </>
+            )}
+
+            <View style={styles.reviewActions}>
+
+    <Pressable
+        style={[
+            styles.promoteBtn,
+            styles.demoteBtn,
+            {
+                flex: 1,
+                alignItems: "center",
+                paddingVertical: 12,
+            },
+        ]}
+        onPress={() => setReviewReport(null)}
+    >
+        <Text
+            style={[
+                styles.promoteText,
+                { color: colors.onSurface },
+            ]}
+        >
+            Close
+        </Text>
+    </Pressable>
+
+    <Pressable
+        style={[
+            styles.promoteBtn,
+            {
+                flex: 1,
+                alignItems: "center",
+                paddingVertical: 12,
+                backgroundColor: colors.error,
+            },
+        ]}
+        onPress={dismissReport}
+    >
+        <Text style={styles.promoteText}>
+            Dismiss
+        </Text>
+    </Pressable>
+
+    <Pressable
+    style={[
+        styles.promoteBtn,
+        {
+            backgroundColor: "#DC2626", // or your danger color
+            flex: 1,
+            alignItems: "center",
+            paddingVertical: 12,
+        },
+    ]}
+    onPress={() => {
+        if (!reviewReport) return;
+
+        setDeleteReport(reviewReport);
+        setReviewReport(null);
+
+        // reset defaults every time
+        setViolation("spam");
+        setModeratorNote("");
+    }}
+>
+    <Text style={styles.promoteText}>
+        Delete Post
+    </Text>
+</Pressable>
+
+</View>
+
+        </View>
+    </View>
+</Modal>
+
+<Modal
+    transparent
+    visible={!!deleteReport}
+    animationType="fade"
+    onRequestClose={() => setDeleteReport(null)}
+>
+    <KeyboardAvoidingView
+        style={styles.modalBg}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+
+        <View style={styles.modalCard}>
+
+    <Text style={styles.modalTitle}>
+        Delete Post
+    </Text>
+
+    <Text
+        style={{
+            color: colors.muted,
+            fontSize: font.sm,
+        }}
+    >
+      
+        This post will be removed because it violates Huni Community Guidelines.
+    </Text>
+    <Text
+    style={styles.fieldLabel}
+>
+    Violation
+</Text>
+
+<Text
+    style={[
+        styles.fieldLabel,
+        {
+            marginTop: spacing.lg,
+        },
+    ]}
+>
+    Moderator Note
+</Text>
+
+<TextInput
+    value={moderatorNote}
+    onChangeText={setModeratorNote}
+    placeholder="Explain why this post is being removed..."
+    placeholderTextColor={colors.muted}
+    multiline
+    numberOfLines={4}
+    style={styles.moderatorInput}
+/>
+<View
+    style={{
+        flexDirection: "row",
+        gap: spacing.md,
+        marginTop: spacing.xl,
+    }}
+>
+<Pressable
+    style={[
+        styles.secondaryBtn,
+        {
+            flex: 1,
+        },
+    ]}
+    onPress={() => {
+        setDeleteReport(null);
+        setModeratorNote("");
+        setViolation("spam");
+    }}
+>
+    <Text style={styles.secondaryBtnText}>
+        Cancel
+    </Text>
+</Pressable>
+<Pressable
+    style={[
+        styles.promoteBtn,
+        {
+            backgroundColor: colors.error,
+            flex: 1,
+        },
+    ]}
+    disabled={deletingPost}
+    onPress={deletePost}
+>
+    <Text style={styles.promoteText}>
+        {deletingPost ? "Deleting..." : "Delete Post"}
+    </Text>
+</Pressable>
+
+</View>
+
+<View
+    style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: spacing.sm,
+    }}
+>
+
+    {violations.map((v) => (
+
+        <Pressable
+            key={v.id}
+            onPress={() => setViolation(v.id)}
+            style={[
+                styles.roleChip,
+
+                violation === v.id && {
+                    backgroundColor: colors.brand,
+                },
+            ]}
+        >
+
+            <Text
+                style={[
+                    styles.roleText,
+
+                    violation === v.id && {
+                        color: "#FFF",
+                    },
+                ]}
+            >
+                {v.label}
+            </Text>
+
+        </Pressable>
+
+    ))}
+
+
+</View>
+
+</View>
+
+    </KeyboardAvoidingView>
+</Modal>
 
       {/* Approval-with-budget modal */}
       <Modal transparent visible={!!approving} animationType="slide" onRequestClose={() => setApproving(null)}>
@@ -638,4 +1289,27 @@ const styles = StyleSheet.create({
   rewardStat: { flex: 1, minWidth: 80, backgroundColor: colors.brandTertiary, padding: spacing.sm, borderRadius: radius.sm, alignItems: "center" },
   rewardStatValue: { fontWeight: "900", color: colors.onBrandTertiary, fontSize: font.sm },
   rewardStatLabel: { color: colors.onBrandTertiary, opacity: 0.75, fontSize: 10 },
+  secondaryBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 12,
+},
+secondaryBtnText: {
+    color: colors.onSurface,
+    fontWeight: "600",
+},
+moderatorInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    color: colors.onSurface,
+    minHeight: 100,
+    textAlignVertical: "top",
+    marginTop: spacing.sm,
+}
 });

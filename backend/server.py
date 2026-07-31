@@ -3,7 +3,7 @@
 FastAPI + MongoDB (motor). JWT auth with bcrypt password hashing.
 WebSockets for realtime chat + notifications.
 """
-from __future__ import annotations
+#from __future__ import annotations
 import os
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
@@ -43,6 +43,9 @@ from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 from fastapi import Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi import Body
 
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
@@ -124,14 +127,22 @@ api = APIRouter(prefix="/api")
 app.include_router(legal.router)
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
-app.add_exception_handler(
-    RateLimitExceeded,
-    _rate_limit_exceeded_handler
-)
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    print("\n========== VALIDATION ERROR ==========")
+    print(exc.errors())
+    print("Body:", exc.body)
+    print("======================================\n")
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
 app.add_middleware(SecurityHeadersMiddleware)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("huni")
+logger = logging.getLogger("huni")
 
 
 
@@ -473,6 +484,12 @@ class ReportIn(BaseModel):
     target_id: str
     reason: str = Field(max_length=300)
 
+class ResolveReportIn(BaseModel):
+    action: str                 # delete_post, dismiss, suspend_user
+    violation: str              # spam, hate_speech, etc.
+    note: str = ""
+    notify: bool = True
+
 
 class BlockIn(BaseModel):
     target_user_id: str
@@ -648,6 +665,141 @@ async def award_xp_once_per_day(user_id: str, key: str, xp_amount: int, reason: 
         await award_xp(user_id, xp_amount, reason)
         return True
     return False
+
+
+async def create_notification(
+    *,
+    user_id: str,
+    type: str,
+    title: str,
+    message: str,
+    post_id: str | None = None,
+    violation: str | None = None,
+    moderator_note: str | None = None,
+):
+    await db.notifications.insert_one({
+        "id": new_id(),
+        "user_id": user_id,
+        "type": type,
+        "title": title,
+        "message": message,
+        "post_id": post_id,
+        "violation": violation,
+        "moderator_note": moderator_note,
+        "created_at": now().isoformat(),
+        "read": False,
+    })
+
+    await ws_manager.send_to(
+        user_id,
+        {
+            "type": "notification",
+        },
+    )
+
+async def notify_post_removed(
+    *,
+    post: dict,
+    violation: str,
+    moderator_note: str,
+) -> None:
+
+    recipients: set[str] = set()
+
+    #
+    # 1. Notify the author
+    #
+    await create_notification(
+        user_id=post["author_id"],
+        type="moderation",
+        title="Post Removed",
+        message="Your post was removed by a moderator for violating the Community Guidelines.",
+        post_id=post["id"],
+        violation=violation,
+        moderator_note=moderator_note,
+    )
+
+    recipients.add(post["author_id"])
+
+    #
+    # 2. Commenters
+    #
+    comments = await db.comments.find(
+        {
+            "post_id": post["id"],
+            "status": "active",
+        },
+        {
+            "_id": 0,
+            "author_id": 1,
+        },
+    ).to_list(None)
+
+    for c in comments:
+        uid = c["author_id"]
+
+        if uid in recipients:
+            continue
+
+        recipients.add(uid)
+
+        await create_notification(
+            user_id=uid,
+            type="moderation_post_removed",
+            title="Discussion Closed",
+            message="A post you commented on has been removed by moderators.",
+            post_id=post["id"],
+        )
+
+    #
+    # 3. Reactors
+    #
+    for uid in (post.get("reactors") or {}).keys():
+
+        if uid in recipients:
+            continue
+
+        recipients.add(uid)
+
+        await create_notification(
+            user_id=uid,
+            type="moderation_post_removed",
+            title="Post Removed",
+            message="A post you reacted to has been removed by moderators.",
+            post_id=post["id"],
+        )
+
+    #
+    # 4. Bookmarkers
+    #
+    bookmarks = await db.bookmarks.find(
+        {
+            "post_id": post["id"],
+        },
+        {
+            "_id": 0,
+            "user_id": 1,
+        },
+    ).to_list(None)
+
+    for b in bookmarks:
+
+        uid = b["user_id"]
+
+        if uid in recipients:
+            continue
+
+        recipients.add(uid)
+
+        await create_notification(
+            user_id=uid,
+            type="moderation_post_removed",
+            title="Saved Post Removed",
+            message="One of your bookmarked posts has been removed by moderators.",
+            post_id=post["id"],
+        )
+
+
 
 
 async def maybe_promote_admin(user: Dict[str, Any]) -> Dict[str, Any]:
@@ -948,9 +1100,11 @@ async def login(request:Request,inp: LoginIn) -> AuthOut:
     token = make_token(user["id"])
     return AuthOut(token=token, user=public_user(fresh or user))
 
+
+
 @api.post("/auth/firebase", response_model=AuthOut)
 @limiter.limit("5/minute")
-async def firebase_login(request:Request,inp: FirebaseAuthIn) -> AuthOut:
+async def firebase_login(request:Request,inp: FirebaseAuthIn = Body(...)) -> AuthOut:
     try:
         decoded = firebase_auth.verify_id_token(inp.id_token)
     except Exception:
@@ -1236,7 +1390,15 @@ async def list_posts(
 
 @api.get("/posts/{post_id}")
 async def get_post(post_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    p = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    p = await db.posts.find_one(
+    {
+        "id": post_id,
+        "status": "active",
+    },
+    {
+        "_id": 0,
+    },
+)
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
     return await _hydrate_post(p, user["id"])
@@ -1249,6 +1411,12 @@ async def delete_post(post_id: str, user: Dict[str, Any] = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Post not found")
     if p["author_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Not allowed")
+        image_ids = p.get("image_ids") or []
+
+        if image_ids:
+            await db.images.delete_many({
+                "id": {"$in": image_ids}
+            })
     await db.posts.update_one({"id": post_id}, {"$set": {"status": "deleted"}})
     return {"status": "ok"}
 
@@ -1256,7 +1424,12 @@ async def delete_post(post_id: str, user: Dict[str, Any] = Depends(get_current_u
 @api.post("/posts/{post_id}/react")
 @limiter.limit("300/hour")
 async def react_post(request:Request,post_id: str, inp: ReactionIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    p = await db.posts.find_one({"id": post_id})
+    p = await db.posts.find_one(
+    {
+        "id": post_id,
+        "status": "active",
+    }
+)
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
     reactions = p.get("reactions", {}) or {}
@@ -1299,7 +1472,12 @@ async def react_post(request:Request,post_id: str, inp: ReactionIn, user: Dict[s
 
 @api.post("/posts/{post_id}/pulse-vote")
 async def pulse_vote(post_id: str, inp: PulseVoteIn, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    p = await db.posts.find_one({"id": post_id})
+    p = await db.posts.find_one(
+    {
+        "id": post_id,
+        "status": "active",
+    }
+)
     if not p or p.get("mood") != "pulse":
         raise HTTPException(status_code=404, detail="Pulse not found")
     options = p.get("pulse_options") or []
@@ -1320,7 +1498,16 @@ async def pulse_vote(post_id: str, inp: PulseVoteIn, user: Dict[str, Any] = Depe
 # ---------- routes: bookmarks ----------
 @api.post("/posts/{post_id}/bookmark")
 async def toggle_bookmark(post_id: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    p = await db.posts.find_one({"id": post_id}, {"_id": 0, "id": 1})
+    p = await db.posts.find_one(
+    {
+        "id": post_id,
+        "status": "active",
+    },
+    {
+        "_id": 0,
+        "id": 1,
+    },
+)
     if not p:
         raise HTTPException(status_code=404, detail="Post not found")
     existing = await db.bookmarks.find_one({"post_id": post_id, "user_id": user["id"]})
@@ -1417,6 +1604,7 @@ async def upload_image(
 
 @api.get("/images/{image_id}")
 async def get_image(image_id: str) -> Response:
+    
     img = await db.images.find_one({"id": image_id})
 
     if not img:
@@ -1426,6 +1614,7 @@ async def get_image(image_id: str) -> Response:
         )
 
     image_data = img.get("data")
+    
 
     if not image_data:
         raise HTTPException(
@@ -1442,16 +1631,19 @@ async def get_image(image_id: str) -> Response:
         },
     )
 
+
 # ---------- routes: ads ----------
 def _hydrate_ad(a: Dict[str, Any], feed_key: str | None = None) -> Dict[str, Any]:
+    render_id = feed_key or a["id"]
+
     return {
         "type": "ad",
 
-        # unique key for React
-        "id": a["id"],
+        # Unique ID for each appearance in the feed
+        "id": render_id,
 
-        # real ad id
-        "feed_key": feed_key or a["id"],
+        # Actual database ID
+        "ad_id": a["id"],
 
         "advertiser_id": a["advertiser_id"],
         "business_name": a["business_name"],
@@ -1904,7 +2096,14 @@ async def partner_create_campaign(inp: CampaignCreate, user: Dict[str, Any] = De
 @api.get("/partner/campaigns")
 async def partner_my_campaigns(user: Dict[str, Any] = Depends(get_current_user)) -> List[Dict[str, Any]]:
     require_role(user, "partner", "admin")
-    rows = await db.campaigns.find({"partner_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    rows = await (
+        db.campaigns
+            .find(q, {"_id": 0})
+            .sort("created_at", -1)
+            .skip(offset)
+            .limit(limit)
+            .to_list(limit)
+    )
     return [_hydrate_campaign(c, user) for c in rows]
 
 
@@ -2971,7 +3170,12 @@ async def list_comments(post_id: str, user: Dict[str, Any] = Depends(get_current
 @limiter.limit("60/hour")
 async def create_comment(request:Request,post_id: str, inp: CommentCreate, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     is_ad = False
-    p = await db.posts.find_one({"id": post_id})
+    p = await db.posts.find_one(
+    {
+        "id": post_id,
+        "status": "active",
+    }
+)
     if not p:
         p = await db.ads.find_one({"id": post_id, "status": "active"})
         if p:
@@ -3138,6 +3342,17 @@ async def delete_comment(comment_id: str, user: Dict[str, Any] = Depends(get_cur
     is_ad_owner = bool(ad) and ad["advertiser_id"] == user["id"]
     if not (is_owner or is_ad_owner or user.get("role") == "admin"):
         raise HTTPException(status_code=403, detail="Not allowed")
+        image_ids = comment.get("image_ids") or []
+
+        if image_ids:
+            await db.images.delete_many({
+                "id": {"$in": image_ids}
+            })
+
+        await db.comments.update_one(
+            {"id": comment_id},
+            {"$set": {"status": "deleted"}}
+        )
     await db.comments.update_one({"id": comment_id}, {"$set": {"status": "deleted"}})
     if ad:
         await db.ads.update_one({"id": c["post_id"]}, {"$inc": {"comment_count": -1}})
@@ -3477,6 +3692,210 @@ async def report(inp: ReportIn, user: Dict[str, Any] = Depends(get_current_user)
     return {"status": "ok"}
 
 
+@api.get("/admin/reports")
+async def admin_reports(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    require_role(user, "admin")
+
+    reports = await (
+        db.reports
+        .find({"status": "pending"}, {"_id": 0})
+        .sort("created_at", -1)
+        .skip(offset)
+        .limit(limit)
+        .to_list(limit)
+    )
+
+    out = []
+
+    for r in reports:
+        reporter = await db.users.find_one(
+            {"id": r["reporter_id"]},
+            {"_id": 0},
+        )
+
+        target = None
+
+        if r["target_type"] == "post":
+            target = await db.posts.find_one(
+                {"id": r["target_id"]},
+                {"_id": 0},
+            )
+
+        elif r["target_type"] == "comment":
+            target = await db.comments.find_one(
+                {"id": r["target_id"]},
+                {"_id": 0},
+            )
+
+        elif r["target_type"] == "user":
+            target = await db.users.find_one(
+                {"id": r["target_id"]},
+                {"_id": 0, "password": 0},
+            )
+
+        elif r["target_type"] == "message":
+            target = await db.messages.find_one(
+                {"id": r["target_id"]},
+                {"_id": 0},
+            )
+
+        out.append({
+            **r,
+            "reporter": public_user(reporter) if reporter else None,
+            "target": target,
+        })
+
+    return out
+
+
+@api.post("/admin/reports/{report_id}/dismiss")
+async def dismiss_report(
+    report_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    require_role(user, "admin")
+
+    result = await db.reports.update_one(
+        {
+            "id": report_id,
+        },
+        {
+            "$set": {
+                "status": "dismissed",
+            }
+        },
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found",
+        )
+
+    return {
+        "status": "ok",
+    }
+
+    
+
+
+@api.post("/admin/reports/{report_id}/resolve")
+async def resolve_report(
+    report_id: str,
+    body: ResolveReportIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    require_role(user, "admin")
+
+    report = await db.reports.find_one({"id": report_id})
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found",
+        )
+
+    if report.get("status") != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="Report already resolved",
+        )
+
+    if body.action == "dismiss":
+        await db.reports.update_one(
+            {"id": report_id},
+            {
+                "$set": {
+                    "status": "dismissed",
+                    "resolved_at": utc_now(),
+                    "resolved_by": user["id"],
+                    "moderator_action": "dismiss",
+                    "violation": body.violation,
+                    "moderator_note": body.note,
+                }
+            },
+        )
+
+        return {"status": "ok"}
+
+    if body.action == "delete_post":
+        if report["target_type"] != "post":
+            raise HTTPException(
+                status_code=400,
+                detail="This report is not for a post",
+            )
+
+        post = await db.posts.find_one(
+            {
+                "id": report.get("target_id")
+            }
+        )
+
+        if not post:
+            raise HTTPException(
+                status_code=404,
+                detail="Post not found",
+            )
+        if post.get("status") != "active":
+            raise HTTPException(
+                status_code=400,
+                detail="Post is already unavailable",
+            )
+
+        result = await db.posts.update_one(
+            {
+                "id": post["id"],
+            },
+            {
+                "$set": {
+                    "status": "deleted_by_admin",
+                    "deleted_at": utc_now(),
+                    "deleted_by": user["id"],
+                    "deletion_reason": body.violation,
+                    "moderator_note": body.note,
+                }
+            },
+        )
+        if result.modified_count == 0:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to delete post",
+            )
+        await db.reports.update_one(
+            {
+                "id": report_id,
+            },
+            {
+                "$set": {
+                    "status": "resolved",
+                    "resolved_at": utc_now(),
+                    "resolved_by": user["id"],
+                    "moderator_action": "delete_post",
+                    "resolved_target_status": "deleted_by_admin",
+                    "violation": body.violation,
+                    "moderator_note": body.note,
+                }
+            },
+        )
+        if body.notify:
+            await notify_post_removed(
+                post=post,
+                violation=body.violation,
+                moderator_note=body.note,
+            )
+        return {
+            "status": "ok",
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail="Unknown moderation action",
+    )
+
 # ---------- websocket ----------
 @api.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, token: str = Query(...)) -> None:
@@ -3724,7 +4143,7 @@ async def on_startup() -> None:
     await db.user_sessions.create_index("user_id")
     # TTL index — MongoDB auto-removes expired sessions
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
-    log.info("Huni API started")
+    logger.info("Huni API started")
 
 
 @app.on_event("shutdown")

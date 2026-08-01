@@ -90,7 +90,19 @@ const displayContent =
   const hasMore = rEntries.length > 3;
 
   return (
-    <Pressable onPress={openPost} style={styles.card} testID={`post-card-${post.id}`}>
+    <Pressable
+    onPress={openPost}
+    android_ripple={{
+        color: "rgba(0,0,0,0.05)",
+        borderless: false,
+    }}
+    style={({ pressed }) => [
+        styles.card,
+        pressed && {
+            opacity: 0.96,
+            transform: [{ scale: 0.985 }],
+        },
+    ]} testID={`post-card-${post.id}`}>
       <View style={styles.header}>
         <Pressable onPress={openProfile} style={styles.authorRow} hitSlop={8}>
           <Avatar
@@ -122,7 +134,7 @@ const displayContent =
     {displayContent || ""}
 </Text>
 
-      {!!post.images?.length && <PostImages images={post.images} height={isFeed ? 220 : 300} />}
+      {!!post.images?.length && <PostImages images={post.images} height={isFeed ? 240 : 320} style={borderRadius: 18}/>}
 
       {post.mood === "pulse" && post.pulse_options && (
         <View style={styles.pulseWrap}>
@@ -224,23 +236,63 @@ const displayContent =
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
+    borderRadius: radius.xl,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    marginBottom: spacing.lg,
+    overflow: "hidden",
     ...shadow.card,
-  },
-  header: { flexDirection: "row", alignItems: "center", marginBottom: spacing.md },
-  authorRow: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: spacing.sm },
-  alias: { fontSize: font.base, fontWeight: "700", color: colors.onSurface },
-  timestamp: { fontSize: font.sm, color: colors.muted, marginTop: 2 },
-  title: {
-    fontSize: 19,
+},
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    marginBottom: spacing.lg,
+},
+  authorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    flex: 1,
+
+    marginRight: spacing.md,
+},
+  alias: {
+    fontSize: font.base,
+
     fontWeight: "800",
+
     color: colors.onSurface,
-    marginBottom: 6,
+},
+  timestamp: {
+    fontSize: font.sm,
+
+    color: colors.muted,
+
+    marginTop: 4,
+},
+  title: {
+    fontSize: 21,
+
+    fontWeight: "800",
+
+    color: colors.onSurface,
+
+    lineHeight: 28,
+
+    marginBottom: 10,
+
+    letterSpacing: -0.4,
+},
+  content: {
+    fontSize: font.base,
+
     lineHeight: 24,
-  },
-  content: { fontSize: font.base, lineHeight: 21, color: colors.onSurfaceTertiary, marginBottom: spacing.md },
+
+    color: colors.onSurfaceSecondary,
+
+    marginBottom: spacing.lg,
+},
 
   footerFeed: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   footerDetail: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: spacing.sm },
@@ -249,9 +301,9 @@ const styles = StyleSheet.create({
   reactChip: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
     backgroundColor: colors.surfaceTertiary,
     gap: 3,
   },
@@ -275,15 +327,15 @@ const styles = StyleSheet.create({
   commentPill: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: radius.pill,
     backgroundColor: colors.surfaceTertiary,
     gap: 4,
   },
   commentCount: { fontSize: font.sm, color: colors.onSurfaceTertiary, fontWeight: "600" },
   footerRightGroup: { flexDirection: "row", alignItems: "center", gap: 6 },
-  iconBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
+  iconBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
   iconBtnActive: { backgroundColor: colors.brandTertiary },
 
   pulseWrap: { marginBottom: spacing.md, gap: spacing.sm },
@@ -292,11 +344,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceTertiary,
     overflow: "hidden",
     position: "relative",
-    height: 40,
+    height: 46,
     justifyContent: "center",
   },
   pulseFill: { position: "absolute", left: 0, top: 0, bottom: 0 },
   pulseRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: spacing.md },
-  pulseLabel: { fontSize: font.base, color: colors.onSurface },
+  pulseLabel: { fontSize: font.md, color: colors.onSurface },
   pulsePct: { fontSize: font.sm, color: colors.muted, fontWeight: "700" },
 });

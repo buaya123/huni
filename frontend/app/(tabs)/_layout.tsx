@@ -7,6 +7,7 @@ import { useWS } from "@/src/context/ws";
 import { api } from "@/src/api/client";
 import { colors } from "@/src/theme/tokens";
 import { Redirect } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function Badge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -23,6 +24,7 @@ export default function TabsLayout() {
   const router = useRouter();
   const [notifCount, setNotifCount] = useState(0);
   const [msgUnread, setMsgUnread] = useState(0);
+  const insets = useSafeAreaInsets();
 
   const refreshCounts = useCallback(async () => {
     try {
@@ -81,19 +83,31 @@ if (!user) {
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
-        tabBarHideOnKeyboard: true,
-        tabBarActiveTintColor: colors.brand,
-        tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: {
+      headerShown: false,
+      tabBarHideOnKeyboard: true,
+      tabBarActiveTintColor: colors.brand,
+      tabBarInactiveTintColor: colors.muted,
+
+      tabBarStyle: {
           backgroundColor: colors.surfaceSecondary,
           borderTopColor: colors.border,
-          height: 64,
-          paddingBottom: 8,
+
+          height: 68 + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, 8),
           paddingTop: 6,
-        },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
-      }}
+          paddingHorizontal: 6,
+      },
+
+      tabBarItemStyle: {
+          paddingVertical: 2,
+      },
+
+      tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: "600",
+          marginBottom: 2,
+      },
+  }}
     >
       <Tabs.Screen
         name="home"
@@ -169,4 +183,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   badgeText: { color: "#FFF", fontSize: 10, fontWeight: "700" },
+  tabBarItemStyle: {
+    paddingVertical: 2,
+},
 });

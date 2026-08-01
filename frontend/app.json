@@ -21,7 +21,7 @@
         "foregroundImage": "./assets/images/hu.png",
         "backgroundColor": "#000000"
       },
-      "edgeToEdgeEnabled": true,
+      "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "package": "com.huni.mobile",
       "permissions": [

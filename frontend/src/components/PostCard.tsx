@@ -134,7 +134,7 @@ const displayContent =
     {displayContent || ""}
 </Text>
 
-      {!!post.images?.length && <PostImages images={post.images} height={isFeed ? 240 : 320} style={borderRadius: 18}/>}
+      {!!post.images?.length && <PostImages images={post.images} height={isFeed ? 240 : 320} style={{borderRadius: 18}}/>}
 
       {post.mood === "pulse" && post.pulse_options && (
         <View style={styles.pulseWrap}>

@@ -57,7 +57,19 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
   };
 
   return (
-    <Pressable style={styles.card} onPress={openDetail} disabled={!isFeed} testID={`ad-card-${ad.ad_id}`}>
+    <Pressable
+    onPress={openDetail}
+    disabled={!isFeed}
+    android_ripple={{
+        color: "rgba(0,0,0,0.05)",
+    }}
+    style={({ pressed }) => [
+        styles.card,
+        pressed && {
+            opacity: 0.96,
+            transform: [{ scale: 0.985 }],
+        },
+    ]} disabled={!isFeed} testID={`ad-card-${ad.ad_id}`}>
       <View style={styles.head}>
         <View style={styles.bizAvatar}>
           <Ionicons name="storefront" size={16} color={colors.brand} />
@@ -71,7 +83,10 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
       <Text style={styles.title}>{ad.title}</Text>
       <Text style={styles.content} numberOfLines={isFeed ? 3 : undefined}>{ad.content}</Text>
 
-      {!!ad.images?.length && <PostImages images={ad.images} height={isFeed ? 220 : 300} />}
+      {!!ad.images?.length && <PostImages
+    images={ad.images}
+    height={isFeed ? 240 : 320}
+/>}
 
       <View style={styles.footer}>
         {!!ad.link_url && (
@@ -94,36 +109,75 @@ export function AdCard({ ad, mode = "feed", trackImpression = true }: Props) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginBottom: spacing.md,
+
+    borderRadius: radius.xl,
+
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+
+    marginBottom: spacing.lg,
+
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  head: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+
+    ...shadow.card,
+
+    overflow: "hidden",
+},
+  head: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    gap: spacing.md,
+
+    marginBottom: spacing.md,
+},
   bizAvatar: {
-    width: 32, height: 32, borderRadius: 16,
+    width: 38,
+    height: 38,
+
+    borderRadius: 19,
     backgroundColor: colors.brandTertiary,
     alignItems: "center", justifyContent: "center",
   },
-  bizName: { flex: 1, fontWeight: "800", color: colors.onSurface, fontSize: font.base },
+  bizName: { flex: 1, fontWeight: "700", color: colors.onSurface, fontSize: font.base,letterSpacing: -0.2, },
   sponsoredPill: {
     backgroundColor: colors.surfaceTertiary,
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
   },
   sponsoredText: { fontSize: 10, fontWeight: "800", color: colors.muted, letterSpacing: 0.5, textTransform: "uppercase" },
-  title: { fontSize: font.lg, fontWeight: "700", color: colors.onSurface, marginBottom: 4 },
-  content: { fontSize: font.base, color: colors.onSurfaceTertiary, lineHeight: 20, marginBottom: spacing.md },
+  title: {
+    fontSize: 21,
+
+    fontWeight: "800",
+
+    color: colors.onSurface,
+
+    marginBottom: 10,
+
+    lineHeight: 28,
+
+    letterSpacing: -0.3,
+},
+  content: {
+    fontSize: font.base,
+
+    color: colors.onSurfaceSecondary,
+
+    lineHeight: 24,
+
+    marginBottom: spacing.lg,
+},
   footer: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   ctaBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: colors.brand, paddingHorizontal: spacing.lg, paddingVertical: 10,
+    backgroundColor: colors.brand, paddingHorizontal: spacing.xl, paddingVertical: 12,
     borderRadius: radius.pill,
   },
   ctaText: { color: "#FFF", fontWeight: "700", fontSize: font.sm },
   commentPill: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: spacing.md, paddingVertical: 8,
+    paddingHorizontal: spacing.lg, paddingVertical: 10,
     borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary,
   },
   commentText: { color: colors.muted, fontWeight: "700", fontSize: font.sm },

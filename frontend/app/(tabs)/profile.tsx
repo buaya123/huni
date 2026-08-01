@@ -228,7 +228,7 @@ const loadMoreListened = async () => {
           </Pressable>
         </View>
         <View style={styles.headerCard}>
-          <Avatar alias={user.alias} size={72} avatarImageId={avatarId} borderImageId={borderId} />
+          <Avatar alias={user.alias} size={84} avatarImageId={avatarId} borderImageId={borderId} />
           <Text style={styles.alias} testID="profile-alias">{user.alias}</Text>
           <Text style={styles.joined}>Joined {joined}</Text>
 
@@ -443,19 +443,21 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.surface },
-  banner: { height: 100, backgroundColor: colors.brand, position: "relative" },
+  banner: { height: 140, backgroundColor: colors.brand, position: "relative" },
   qrBtn: { position: "absolute", top: 12, right: 60, padding: 8 },
   settingsBtn: { position: "absolute", top: 12, right: 16, padding: 8 },
   headerCard: {
     marginHorizontal: spacing.lg,
     marginTop: -50,
-    padding: spacing.lg,
     backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
+    ...shadow.card,
     alignItems: "center",
     gap: spacing.sm,
   },
-  alias: { fontSize: 22, fontWeight: "800", color: colors.onSurface, marginTop: spacing.sm },
+  alias: { fontSize: 24, fontWeight: "800", color: colors.onSurface, marginTop: spacing.sm,letterSpacing:-0.4},
   joined: { fontSize: font.sm, color: colors.muted },
   bio: { fontSize: font.base, color: colors.onSurfaceTertiary, textAlign: "center", marginTop: spacing.sm },
   bioInput: {
@@ -491,10 +493,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
     marginBottom: spacing.md,
     backgroundColor: colors.surfaceTertiary,
-    borderRadius: radius.pill,
-    padding: 4,
+    padding: 5,
+    borderRadius: radius.xl,
   },
-  tab: { flex: 1, paddingVertical: 8, borderRadius: radius.pill, alignItems: "center" },
+  tab: { flex: 1, paddingVertical: 8, borderRadius: radius.pill, alignItems: "center",...shadow.card },
   tabActive: { backgroundColor: colors.surfaceSecondary },
   tabText: { color: colors.onSurfaceTertiary, fontWeight: "600", fontSize: font.sm },
   tabTextActive: { color: colors.onSurface, fontWeight: "700" },

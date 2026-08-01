@@ -58,7 +58,7 @@ const load = useCallback(async () => {
               style={styles.row}
               testID={`conv-${item.id}`}
             >
-              <Avatar alias={item.other.alias} size={48} />
+              <Avatar alias={item.other.alias} size={52} />
               <View style={{ flex: 1 }}>
                 <View style={styles.topRow}>
                   <Text style={styles.alias}>{item.other.alias}</Text>
@@ -93,19 +93,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    padding: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
     backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     marginBottom: spacing.sm,
+    ...shadow.card,
   },
   topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   bottomRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 2 },
   alias: { fontSize: font.base, fontWeight: "700", color: colors.onSurface },
   time: { fontSize: font.sm, color: colors.muted },
-  preview: { flex: 1, fontSize: font.sm, color: colors.muted },
+  preview: { flex: 1, fontSize: font.sm, color: colors.muted, lineHeight:20},
   previewUnread: { color: colors.onSurface, fontWeight: "600" },
   unreadDot: {
-    minWidth: 20, height: 20, borderRadius: 10, backgroundColor: colors.brand,
+    minWidth: 22, height: 22, borderRadius: 10, backgroundColor: colors.brand ,fontWeight:"800",
     alignItems: "center", justifyContent: "center", paddingHorizontal: 6,
   },
   unreadText: { color: "#FFF", fontSize: 11, fontWeight: "700" },

@@ -18,7 +18,11 @@ export function Avatar({ alias, size = 40, avatarImageId, borderImageId }: Props
 
   // If a border is equipped, the whole thing gets a larger frame with the border image
   // laid over the outer ring. The avatar stays at `size` centered inside.
-  const frameSize = borderImageId ? size * 1.35 : size;
+  const BORDER_SCALE = 2.0;
+
+  const frameSize = borderImageId
+    ? size * BORDER_SCALE
+    : size;
   const avatar = (
 <View
     style={[
